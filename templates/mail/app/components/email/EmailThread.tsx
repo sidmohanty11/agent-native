@@ -55,6 +55,8 @@ import {
   IconDownload,
   IconPhoto,
   IconSearch,
+  IconArrowsMaximize,
+  IconArrowsMinimize,
 } from "@tabler/icons-react";
 import {
   InlineReplyComposer,
@@ -72,6 +74,8 @@ export function EmailThread({
   setSelectedIds,
   onContactSelect,
   onNavigateThread,
+  isMaximized = false,
+  onToggleMaximize,
 }: {
   activeThreadId?: string;
   onArchived?: (id: string) => void;
@@ -91,6 +95,8 @@ export function EmailThread({
   setSelectedIds?: React.Dispatch<React.SetStateAction<Set<string>>>;
   onContactSelect?: (email: string) => void;
   onNavigateThread?: (threadId: string | undefined) => void;
+  isMaximized?: boolean;
+  onToggleMaximize?: () => void;
 }) {
   const { view = "inbox", threadId: routeThreadId } = useParams<{
     view: string;
@@ -1131,6 +1137,27 @@ export function EmailThread({
                 >
                   <IconChevronDown className="h-3.5 w-3.5" />
                 </button>
+                {onToggleMaximize && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={onToggleMaximize}
+                        className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors ml-1"
+                        aria-label={isMaximized ? "Minimize" : "Maximize"}
+                        aria-pressed={isMaximized}
+                      >
+                        {isMaximized ? (
+                          <IconArrowsMinimize className="h-3.5 w-3.5" />
+                        ) : (
+                          <IconArrowsMaximize className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {isMaximized ? "Minimize" : "Maximize"}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
               </div>
             </div>
             {(githubPrUrl || unsubscribeInfo) && (
@@ -1793,14 +1820,11 @@ const ExpandedMessageCard = forwardRef<
             activeLocalIdx={activeLocalIdx}
           />
         ) : email.body ? (
-          <div className="space-y-2.5">
-            <PlainTextBody
-              body={email.body}
-              searchTerm={searchTerm}
-              activeLocalIdx={activeLocalIdx}
-            />
-            <BodySkeleton />
-          </div>
+          <PlainTextBody
+            body={email.body}
+            searchTerm={searchTerm}
+            activeLocalIdx={activeLocalIdx}
+          />
         ) : email.snippet ? (
           <div className="space-y-2.5">
             <p className="text-[13px] text-foreground/80 leading-relaxed">
@@ -1822,9 +1846,11 @@ const ExpandedMessageCard = forwardRef<
               {email.attachments
                 .filter((a) => a.mimeType.startsWith("image/"))
                 .map((att) => {
-                  const url = appApiPath(
-                    `/api/attachments?messageId=${email.id}&id=${encodeURIComponent(att.id)}&mimeType=${encodeURIComponent(att.mimeType)}`,
-                  );
+                  const url = att.url
+                    ? appApiPath(att.url)
+                    : appApiPath(
+                        `/api/attachments?messageId=${email.id}&id=${encodeURIComponent(att.id)}&mimeType=${encodeURIComponent(att.mimeType)}`,
+                      );
                   return (
                     <Tooltip key={att.id}>
                       <TooltipTrigger asChild>
@@ -1855,9 +1881,13 @@ const ExpandedMessageCard = forwardRef<
               .map((att) => (
                 <a
                   key={att.id}
-                  href={appApiPath(
-                    `/api/attachments?messageId=${email.id}&id=${encodeURIComponent(att.id)}`,
-                  )}
+                  href={
+                    att.url
+                      ? appApiPath(att.url)
+                      : appApiPath(
+                          `/api/attachments?messageId=${email.id}&id=${encodeURIComponent(att.id)}`,
+                        )
+                  }
                   download={att.filename}
                   className="flex items-center gap-2 rounded-lg bg-accent/60 px-3 py-2 text-xs hover:bg-accent cursor-pointer"
                 >
@@ -1875,9 +1905,11 @@ const ExpandedMessageCard = forwardRef<
                 onClick={() => {
                   for (const att of email.attachments!) {
                     const a = document.createElement("a");
-                    a.href = appApiPath(
-                      `/api/attachments?messageId=${email.id}&id=${encodeURIComponent(att.id)}`,
-                    );
+                    a.href = att.url
+                      ? appApiPath(att.url)
+                      : appApiPath(
+                          `/api/attachments?messageId=${email.id}&id=${encodeURIComponent(att.id)}`,
+                        );
                     a.download = att.filename;
                     a.click();
                   }
@@ -1956,6 +1988,20 @@ function findQuoteStart(lines: string[]): number {
     if (/^[—–-]*\s*On .+ wrote:$/i.test(lines[i].trim())) return i;
     // "--- Original Message ---" / "--- Forwarded message ---"
     if (/^-{2,}\s*(Original|Forwarded)\s/i.test(lines[i].trim())) return i;
+    // Outlook/Word reply headers are often plain text blocks:
+    // From: ... / Sent: ... / To: ... / Subject: ...
+    if (/^From:\s+/i.test(lines[i].trim())) {
+      const headerWindow = lines
+        .slice(i, i + 8)
+        .map((line) => line.trim())
+        .join(" ");
+      if (
+        /\bSent:\s+/i.test(headerWindow) &&
+        /\bSubject:\s+/i.test(headerWindow)
+      ) {
+        return i > 0 && lines[i - 1].trim() === "" ? i - 1 : i;
+      }
+    }
     // Block of consecutive ">" quoted lines (at least 2)
     if (
       lines[i].trimStart().startsWith(">") &&
@@ -2704,6 +2750,145 @@ function HtmlEmailBody({
       }
     };
 
+    const normalizeText = (value: string | null | undefined) =>
+      (value || "").replace(/\s+/g, " ").trim();
+
+    const hasMeaningfulPreviousText = (el: HTMLElement): boolean => {
+      let node: Node | null = el;
+      while (node && node !== doc.body) {
+        let prev = node.previousSibling;
+        while (prev) {
+          if (normalizeText(prev.textContent).length > 20) return true;
+          prev = prev.previousSibling;
+        }
+        node = node.parentNode as Node | null;
+      }
+      return false;
+    };
+
+    const getNearbyPreviousText = (el: HTMLElement) => {
+      const parts: string[] = [];
+      let length = 0;
+      let node: Node | null = el;
+      while (node && node !== doc.body && length < 800) {
+        let prev = node.previousSibling;
+        while (prev && length < 800) {
+          const text = normalizeText(prev.textContent);
+          if (text) {
+            parts.unshift(text);
+            length += text.length;
+          }
+          prev = prev.previousSibling;
+        }
+        node = node.parentNode as Node | null;
+      }
+      return parts.join(" ").slice(-800);
+    };
+
+    const createToggle = (
+      target: HTMLElement,
+      className: "quote-toggle" | "sig-toggle",
+      hiddenClass: "quoted-hidden" | "sig-collapsed",
+    ) => {
+      target.classList.add(hiddenClass);
+      const toggle = doc.createElement("button");
+      toggle.className = className;
+      toggle.textContent = "···";
+      toggle.addEventListener("click", () => {
+        const wasHidden = target.classList.contains(hiddenClass);
+        target.classList.toggle(hiddenClass);
+        toggle.style.display = wasHidden ? "none" : "";
+        requestAnimationFrame(resize);
+      });
+      target.parentNode?.insertBefore(toggle, target);
+    };
+
+    const collapseElement = (el: HTMLElement) => {
+      if (el.closest(".quoted-hidden")) return;
+      createToggle(el, "quote-toggle", "quoted-hidden");
+    };
+
+    // Bounded quantifiers ([^\n]{1,200}?) keep these regexes linear-time
+    // even on adversarial email bodies — unbounded `.+?` over malicious
+    // pattern-like text triggers catastrophic backtracking.
+    const outlookHeaderPattern =
+      /\bFrom:\s+[^\n]{1,200}?\bSent:\s+[^\n]{1,200}?\bTo:\s+[^\n]{1,200}?\bSubject:/i;
+    const replyAttributionPattern =
+      /(?:^|\s)(?:On .{3,300} wrote:|-{2,}\s*(?:Original|Forwarded)\s|From:\s+[^\n]{1,200}?\bSent:\s+[^\n]{1,200}?\bSubject:)/i;
+
+    const isOutlookHeader = (el: HTMLElement) => {
+      const text = normalizeText(el.textContent);
+      return text.length < 1200 && outlookHeaderPattern.test(text);
+    };
+
+    const getOutlookHeaderBlock = (el: HTMLElement) => {
+      let block = el;
+      while (block.parentElement && block.parentElement !== doc.body) {
+        const parent = block.parentElement as HTMLElement;
+        const parentText = normalizeText(parent.textContent);
+        const blockText = normalizeText(block.textContent);
+        if (parentText !== blockText && parent.children.length !== 1) break;
+        block = parent;
+      }
+      return block;
+    };
+
+    const collapseOutlookHeaderRanges = () => {
+      const headerStarts = Array.from(
+        doc.querySelectorAll<HTMLElement>("div, p, table, tbody, tr, td"),
+      )
+        .filter(isOutlookHeader)
+        .map(getOutlookHeaderBlock);
+      const markerStarts = Array.from(
+        doc.querySelectorAll<HTMLElement>('[id$="divRplyFwdMsg"]'),
+      );
+      const starts = [...markerStarts, ...headerStarts];
+      const seen = new Set<HTMLElement>();
+
+      for (const start of starts) {
+        if (seen.has(start)) continue;
+        seen.add(start);
+        if (!start.parentNode || start.closest(".quoted-hidden")) continue;
+        if (
+          start.previousSibling &&
+          (start.previousSibling as HTMLElement).classList?.contains(
+            "quote-toggle",
+          )
+        ) {
+          continue;
+        }
+
+        const container = doc.createElement("div");
+        container.className = "quoted-hidden";
+        start.parentNode.insertBefore(container, start);
+        container.appendChild(start);
+        // Stop at an existing quoted-hidden/quote-toggle so we don't nest
+        // a later collapsed range inside this one. The closest() guard
+        // above handles already-wrapped starts; this protects siblings.
+        while (container.nextSibling) {
+          const next = container.nextSibling as HTMLElement;
+          if (
+            next.classList?.contains?.("quote-toggle") ||
+            next.classList?.contains?.("quoted-hidden")
+          ) {
+            break;
+          }
+          container.appendChild(container.nextSibling);
+        }
+
+        const toggle = doc.createElement("button");
+        toggle.className = "quote-toggle";
+        toggle.textContent = "···";
+        toggle.addEventListener("click", () => {
+          const wasHidden = container.classList.contains("quoted-hidden");
+          container.classList.toggle("quoted-hidden");
+          toggle.style.display = wasHidden ? "none" : "";
+          requestAnimationFrame(resize);
+        });
+        container.parentNode?.insertBefore(toggle, container);
+      }
+    };
+
     // Hide quoted content (Gmail blockquotes, .gmail_quote, etc.) behind "..."
     const quoteSelectors = [
       ".gmail_quote",
@@ -2712,25 +2897,24 @@ function HtmlEmailBody({
       ".yahoo_quoted",
       "#appendonsend",
       ".zmail_extra",
-      'div[id="divRplyFwdMsg"]',
     ];
     const quotes = doc.querySelectorAll(quoteSelectors.join(","));
     quotes.forEach((quote) => {
-      (quote as HTMLElement).classList.add("quoted-hidden");
-      const toggle = doc.createElement("button");
-      toggle.className = "quote-toggle";
-      toggle.textContent = "···";
-      toggle.addEventListener("click", () => {
-        const wasHidden = (quote as HTMLElement).classList.contains(
-          "quoted-hidden",
-        );
-        (quote as HTMLElement).classList.toggle("quoted-hidden");
-        toggle.style.display = wasHidden ? "none" : "";
-        // Recalculate iframe height after expanding/collapsing quoted content
-        requestAnimationFrame(resize);
-      });
-      quote.parentNode?.insertBefore(toggle, quote);
+      collapseElement(quote as HTMLElement);
     });
+
+    doc.querySelectorAll<HTMLElement>("blockquote").forEach((blockquote) => {
+      if (blockquote.closest(".quoted-hidden")) return;
+      if (!replyAttributionPattern.test(getNearbyPreviousText(blockquote))) {
+        return;
+      }
+      collapseElement(blockquote);
+    });
+
+    // Outlook/Word replies often have no quote class. They start the quoted
+    // history with a From/Sent/To/Subject header block, then put the old mail in
+    // ordinary sibling nodes. Collapse that whole tail as one quoted range.
+    collapseOutlookHeaderRanges();
 
     // ── Collapse signature blocks ──
     // Gmail signatures
@@ -2738,21 +2922,32 @@ function HtmlEmailBody({
       ".gmail_signature",
       '[data-smartmail="gmail_signature"]',
     ];
+    const shouldCollapseSignature = (sig: HTMLElement) => {
+      if (sig.closest(".quoted-hidden")) return false;
+      const text = normalizeText(sig.textContent);
+      if (!text) return false;
+
+      if (hasMeaningfulPreviousText(sig)) return true;
+
+      // Some senders accidentally wrap the whole new message in
+      // .gmail_signature. If the signature candidate is the first meaningful
+      // content and reads like body copy, leave it visible.
+      const startsLikeMessage =
+        /^(hi|hello|hey|dear|sure|thanks for|thank you|just to|what about|apologies|separately)\b/i.test(
+          text,
+        );
+      const hasBodyPunctuation = /[?.!]\s+\S/.test(text.slice(0, 500));
+      if (startsLikeMessage || (text.length > 600 && hasBodyPunctuation)) {
+        return false;
+      }
+
+      return true;
+    };
     const sigs = doc.querySelectorAll(sigSelectors.join(","));
     sigs.forEach((sig) => {
-      (sig as HTMLElement).classList.add("sig-collapsed");
-      const toggle = doc.createElement("button");
-      toggle.className = "sig-toggle";
-      toggle.textContent = "···";
-      toggle.addEventListener("click", () => {
-        const wasHidden = (sig as HTMLElement).classList.contains(
-          "sig-collapsed",
-        );
-        (sig as HTMLElement).classList.toggle("sig-collapsed");
-        toggle.style.display = wasHidden ? "none" : "";
-        requestAnimationFrame(resize);
-      });
-      sig.parentNode?.insertBefore(toggle, sig);
+      const el = sig as HTMLElement;
+      if (!shouldCollapseSignature(el)) return;
+      createToggle(el, "sig-toggle", "sig-collapsed");
     });
 
     // Detect "-- " signature separator in text nodes (standard email sig convention)
@@ -2768,7 +2963,7 @@ function HtmlEmailBody({
           break;
         }
       }
-      if (sigNode) {
+      if (sigNode && !sigNode.closest(".quoted-hidden")) {
         // Wrap the sig separator and all following siblings in a container
         const container = doc.createElement("div");
         container.className = "sig-collapsed";

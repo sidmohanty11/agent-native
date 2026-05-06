@@ -42,6 +42,7 @@ import type {
 import { RecipientInput } from "./RecipientInput";
 import { ComposeEditor, type ComposeEditorHandle } from "./ComposeEditor";
 import { openFilePicker, uploadFile, formatFileSize } from "@/lib/upload";
+import { canUseAgentGenerate } from "@/lib/agent-generate";
 
 function splitQuotedContent(body: string): [string, string] {
   const replyMatch = body.match(/\n*— On .+? wrote:\n/);
@@ -91,6 +92,7 @@ export const InlineReplyComposer = forwardRef<
   const { data: aliases = [] } = useAliases();
   const editorRef = useRef<ComposeEditorHandle>(null);
   const composerRef = useRef<HTMLDivElement>(null);
+  const sendingRef = useRef(false);
 
   useImperativeHandle(ref, () => ({
     focusEditor: () => {
@@ -149,10 +151,12 @@ export const InlineReplyComposer = forwardRef<
   const hasQuote = quotedContent.length > 0;
 
   const handleSend = async () => {
+    if (sendingRef.current) return;
     if (!draft.to.trim()) {
       toast.error("Please add at least one recipient");
       return;
     }
+    sendingRef.current = true;
 
     const draftSnapshot = { ...draft };
     const { savedDraftId } = draft;
@@ -174,6 +178,7 @@ export const InlineReplyComposer = forwardRef<
       replyToId: draftSnapshot.replyToId,
       replyToThreadId: draftSnapshot.replyToThreadId,
       accountEmail: draftSnapshot.accountEmail,
+      attachments: draftSnapshot.attachments,
     });
 
     let cancelled = false;
@@ -181,6 +186,7 @@ export const InlineReplyComposer = forwardRef<
     const handleUndo = () => {
       if (cancelled) return;
       cancelled = true;
+      sendingRef.current = false;
       clearTimeout(sendTimer);
       clearTimeout(transitionTimer);
       toast.dismiss(toastId);
@@ -214,13 +220,18 @@ export const InlineReplyComposer = forwardRef<
           subject: draftSnapshot.subject,
           body: draftSnapshot.body,
           replyToId: draftSnapshot.replyToId,
+          replyToThreadId: draftSnapshot.replyToThreadId,
           accountEmail: draftSnapshot.accountEmail,
+          attachments: draftSnapshot.attachments,
         },
         {
           onError: () => {
             toast.error("Failed to send email");
             const { id: _id, ...reopenData } = draftSnapshot;
             onReopen(reopenData);
+          },
+          onSettled: () => {
+            sendingRef.current = false;
           },
         },
       );
@@ -231,6 +242,7 @@ export const InlineReplyComposer = forwardRef<
     if (!composerRef.current?.contains(e.target as Node)) return;
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
+      e.stopPropagation();
       handleSend();
     }
     if (e.key === "Escape") {
@@ -242,6 +254,13 @@ export const InlineReplyComposer = forwardRef<
 
   const handleGenerate = async () => {
     if (!generatePrompt.trim()) return;
+    if (!(await canUseAgentGenerate())) {
+      toast.error(
+        "Connect Builder or another AI engine before using Generate.",
+      );
+      window.dispatchEvent(new CustomEvent("agent-panel:open"));
+      return;
+    }
     await onFlush(draft.id);
     const context = [
       draft.to && `To: ${draft.to}`,
