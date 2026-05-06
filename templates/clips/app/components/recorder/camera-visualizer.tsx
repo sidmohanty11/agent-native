@@ -234,6 +234,8 @@ export function CameraVisualizer({
       stopStream(stream);
       if (runIdRef.current !== runId) return;
       const message = await friendlyCameraError(err);
+      // friendlyCameraError awaits the Permissions API, so re-check after.
+      if (runIdRef.current !== runId) return;
       setError(message);
       setStatus("error");
       onStatusChange?.("error", { error: message });

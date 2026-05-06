@@ -381,6 +381,8 @@ export function MicrophoneVisualizer({
       stopStream(stream);
       if (runIdRef.current !== runId) return;
       const message = await friendlyMicError(err);
+      // friendlyMicError awaits the Permissions API, so re-check after.
+      if (runIdRef.current !== runId) return;
       setSignal(false);
       setError(message);
       setStatus("error");
