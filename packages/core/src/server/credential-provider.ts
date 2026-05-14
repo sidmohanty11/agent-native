@@ -553,13 +553,13 @@ export function hasBuilderPrivateKey(): boolean {
   return !!process.env.BUILDER_PRIVATE_KEY;
 }
 
-/** The origin for Builder-proxied API calls. Overridable for testing. */
+/** The origin for Builder-hosted API calls. Overridable for testing. */
 export function getBuilderProxyOrigin(): string {
   return (
     process.env.BUILDER_PROXY_ORIGIN ||
     process.env.AIR_HOST ||
     process.env.BUILDER_API_HOST ||
-    "https://ai-services.builder.io"
+    "https://api.builder.io"
   );
 }
 

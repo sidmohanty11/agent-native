@@ -1,5 +1,5 @@
 import {
-  resolveBuilderAuthHeader,
+  resolveBuilderCredentials,
   getBuilderProxyOrigin,
 } from "../server/credential-provider.js";
 
@@ -42,10 +42,15 @@ function describeError(err: unknown): string {
 export async function transcribeWithBuilder(
   opts: BuilderTranscribeOptions,
 ): Promise<BuilderTranscribeResult> {
-  const authHeader = await resolveBuilderAuthHeader();
-  if (!authHeader) {
+  const builderCreds = await resolveBuilderCredentials();
+  if (!builderCreds.privateKey) {
     throw new Error(
       "Builder private key not configured. Connect your Builder.io account in Settings.",
+    );
+  }
+  if (!builderCreds.publicKey) {
+    throw new Error(
+      "Builder space ID not configured. Reconnect Builder.io in Settings so transcription can identify the target space.",
     );
   }
 
@@ -76,7 +81,11 @@ export async function transcribeWithBuilder(
     res = await fetch(url, {
       method: "POST",
       headers: {
-        Authorization: authHeader,
+        Authorization: `Bearer ${builderCreds.privateKey}`,
+        "x-builder-api-key": builderCreds.publicKey,
+        ...(builderCreds.userId
+          ? { "x-builder-user-id": builderCreds.userId }
+          : {}),
         "Content-Type": "application/octet-stream",
       },
       body,

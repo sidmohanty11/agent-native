@@ -342,11 +342,7 @@ function isNoSpeechTranscriptFailure(
 ): boolean {
   if (!reason) return false;
   const normalized = reason.toLowerCase();
-  return (
-    normalized.includes("no speech") ||
-    normalized.includes("no native transcript was captured") ||
-    normalized.includes("no transcript was captured by native speech")
-  );
+  return normalized.includes("no speech");
 }
 
 function friendlyTranscriptFailure(reason: string | null | undefined): string {
@@ -358,14 +354,14 @@ function friendlyTranscriptFailure(reason: string | null | undefined): string {
     normalized.includes("fetch failed") ||
     normalized.includes("backup transcription could not finish")
   ) {
-    return "No speech was captured locally, and backup transcription did not finish. Retry or check microphone and speech permissions.";
+    return "Backup transcription could not finish. Retry in a moment or reconnect Builder.io if this keeps happening.";
   }
   if (
     normalized.includes("api key") ||
     normalized.includes("not configured") ||
     normalized.includes("connect builder")
   ) {
-    return "No speech was captured locally, and backup transcription is not set up.";
+    return "Backup transcription is not set up yet. Connect Builder.io or add a transcription key.";
   }
   return reason;
 }
@@ -551,7 +547,7 @@ function TranscriptSetupCard({
             {isProviderError
               ? "Your API key hit a quota or auth error. Switch to Builder.io or update your key."
               : isConnectedFallbackError
-                ? "No speech was captured locally, and backup transcription did not finish. Retry in a moment."
+                ? "Backup transcription did not finish. Retry in a moment or reconnect Builder.io if this keeps happening."
                 : "Unlock captions, transcript search, and summaries for this Clip."}
           </p>
         </div>

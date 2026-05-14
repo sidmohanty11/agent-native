@@ -775,7 +775,7 @@ export default defineAction({
       if (preserved) return preserved;
 
       const reason = builderError
-        ? "No native transcript was captured, and backup transcription could not finish. Retry transcription or check microphone and speech permissions."
+        ? "Builder backup transcription could not finish. Retry transcription in a moment or reconnect Builder.io if this keeps happening."
         : "No transcript was captured by native speech recognition, and no backup transcription provider is configured.";
       await upsertTranscriptRow(db, {
         recordingId: args.recordingId,

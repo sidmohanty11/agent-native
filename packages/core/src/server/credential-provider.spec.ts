@@ -28,6 +28,7 @@ import {
   resolveBuilderCredential,
   resolveBuilderCredentialSource,
   resolveSecret,
+  getBuilderProxyOrigin,
 } from "./credential-provider.js";
 
 const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
@@ -43,12 +44,26 @@ beforeEach(() => {
   delete process.env.BUILDER_PRIVATE_KEY;
   delete process.env.BUILDER_PUBLIC_KEY;
   delete process.env.OPENAI_API_KEY;
+  delete process.env.BUILDER_PROXY_ORIGIN;
+  delete process.env.AIR_HOST;
+  delete process.env.BUILDER_API_HOST;
   mockReadAppSecret.mockResolvedValue(null);
   mockWriteAppSecret.mockResolvedValue("id");
   mockDeleteAppSecret.mockResolvedValue(true);
   mockGetRequestUserEmail.mockReturnValue(undefined);
   mockGetRequestOrgId.mockReturnValue(undefined);
   mockIsLocalDatabase.mockReturnValue(true);
+});
+
+describe("getBuilderProxyOrigin", () => {
+  it("defaults Builder-hosted API calls to the public Builder API", () => {
+    expect(getBuilderProxyOrigin()).toBe("https://api.builder.io");
+  });
+
+  it("honors explicit Builder proxy origin overrides", () => {
+    process.env.BUILDER_PROXY_ORIGIN = "https://builder-proxy.test";
+    expect(getBuilderProxyOrigin()).toBe("https://builder-proxy.test");
+  });
 });
 
 describe("resolveCredentialWriteScope", () => {

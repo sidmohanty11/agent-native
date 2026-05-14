@@ -12,7 +12,10 @@ import { resolveCredential } from "../credentials/index.js";
 import { getSession } from "./auth.js";
 import { getOrgContext } from "../org/context.js";
 import { runWithRequestContext } from "./request-context.js";
-import { resolveBuilderCredentials } from "./credential-provider.js";
+import {
+  getBuilderProxyOrigin,
+  resolveBuilderCredentials,
+} from "./credential-provider.js";
 
 interface GoogleRealtimeSessionResponse {
   websocketUrl: string;
@@ -156,8 +159,7 @@ export function createGoogleRealtimeSessionHandler() {
         };
       }
 
-      const apiHost =
-        process.env.BUILDER_API_HOST || "https://ai-services.builder.io";
+      const apiHost = getBuilderProxyOrigin();
       const body = ((await readBody(event).catch(() => ({}))) || {}) as {
         language?: unknown;
       };
