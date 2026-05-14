@@ -43,6 +43,7 @@ import {
   createSsrfSafeDispatcher,
   isBlockedExtensionUrlWithDns,
 } from "@agent-native/core/extensions/url-safety";
+import { getOrgContext } from "@agent-native/core/org";
 import { resolveAccess } from "@agent-native/core/sharing";
 import {
   getSession,
@@ -139,9 +140,11 @@ export default defineEventHandler(async (event: H3Event) => {
   }
 
   const session = await getSession(event).catch(() => null);
+  const orgCtx = await getOrgContext(event).catch(() => null);
+  const orgId = orgCtx?.orgId ?? session?.orgId ?? undefined;
 
   return runWithRequestContext(
-    { userEmail: session?.email, orgId: session?.orgId },
+    { userEmail: session?.email, orgId },
     async () => {
       const access = await resolveAccess("recording", recordingId);
       if (!access) {
