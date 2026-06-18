@@ -688,12 +688,8 @@ function localPlanBridgeQueryKey(slug: string, bridgeUrl: string) {
   return ["local-plan-bridge", slug, bridgeUrl] as const;
 }
 
-/**
- * Merge agent-targeted comments persisted in the local folder (comments.json,
- * read via get-local-plan-folder) onto a read-only bridge bundle, which always
- * serves `comments: []`. The bundle's own comments win when present so optimistic
- * and just-written comments are not clobbered by a stale folder read.
- */
+// Merge folder comments.json onto a read-only bridge bundle (which serves none);
+// the bundle's own comments win so optimistic/just-written ones aren't clobbered.
 function mergeLocalBridgeComments(
   bundle: LocalPlanBundle | undefined,
   folderComments: LocalPlanBundle["comments"] | undefined,
@@ -2877,9 +2873,8 @@ export function PlansPage({ localPlanSlug }: { localPlanSlug?: string } = {}) {
       refetchInterval: false,
     },
   );
-  // Bridge bundles are read-only and carry no comments; load persisted
-  // comments.json from the colocated local folder so they render and survive a
-  // refresh in bridge mode too.
+  // Bridge bundles carry no comments; load comments.json from the colocated
+  // folder so they render and survive refresh in bridge mode too.
   const localPlanBridgeCommentsQuery = useActionQuery<LocalPlanBundle>(
     "get-local-plan-folder",
     localPlanBundleQueryParams(localPlanSlug ?? "", localPlanRepoPath),
@@ -4954,9 +4949,8 @@ export function PlansPage({ localPlanSlug }: { localPlanSlug?: string } = {}) {
     toast.success("Feedback instructions copied");
   };
 
-  // Comment writes go to the DB (`update-visual-plan`) for hosted plans, or to
-  // the folder's comments.json (`update-local-plan-comments`) for local plans.
-  // Both return the same bundle shape, so callers just await and setQueryData.
+  // Route comment writes to the DB (hosted) or comments.json (local); both
+  // return the same bundle shape.
   const writeComments = (
     comments: PlanCommentInput[],
     note: string,
