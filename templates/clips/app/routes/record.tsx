@@ -1,6 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { flushSync } from "react-dom";
-import { Link, useLocation, useNavigate } from "react-router";
+import {
+  agentNativePath,
+  appBasePath,
+  callAction,
+  captureClientException,
+} from "@agent-native/core/client";
+import { useLiveTranscription } from "@agent-native/core/client/transcription/use-live-transcription";
+import type { BrowserDiagnosticsData } from "@shared/browser-diagnostics";
 import {
   IconAlertTriangle,
   IconArrowLeft,
@@ -13,13 +18,11 @@ import {
   IconVideo,
 } from "@tabler/icons-react";
 import { useQueryClient } from "@tanstack/react-query";
-import {
-  agentNativePath,
-  appBasePath,
-  callAction,
-  captureClientException,
-} from "@agent-native/core/client";
-import { useLiveTranscription } from "@agent-native/core/client/transcription/use-live-transcription";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
+import { Link, useLocation, useNavigate } from "react-router";
+
+import { Skeleton } from "@/components/ui/skeleton";
 import { useDesktopPromo } from "@/hooks/use-desktop-promo";
 import {
   fetchVideoStorageStatus,
@@ -27,25 +30,10 @@ import {
   VIDEO_STORAGE_STATUS_KEY,
   type VideoStorageStatus,
 } from "@/hooks/use-video-storage-status";
-import { Skeleton } from "@/components/ui/skeleton";
-import {
-  captureVideoThumbnailBlob,
-  uploadRecordingThumbnail,
-} from "@/lib/thumbnail-capture";
 import {
   createBrowserDiagnosticsCapture,
   type BrowserDiagnosticsCapture,
 } from "@/lib/browser-diagnostics-capture";
-import type { BrowserDiagnosticsData } from "@shared/browser-diagnostics";
-import {
-  buildCaptureTitle,
-  defaultRecordingTitle,
-  inferWindowTitleFromDisplayStream,
-} from "@/lib/recording-title";
-import {
-  createCountdownAudioCue,
-  type CountdownAudioCue,
-} from "@/lib/countdown-audio-cue";
 import {
   COMPRESS_THRESHOLD_BYTES,
   COMPRESSION_ENABLED,
@@ -54,9 +42,22 @@ import {
   formatMb,
 } from "@/lib/compress";
 import {
+  createCountdownAudioCue,
+  type CountdownAudioCue,
+} from "@/lib/countdown-audio-cue";
+import {
   loadRecorderPreferences,
   saveRecorderPreferences,
 } from "@/lib/recorder-preferences";
+import {
+  buildCaptureTitle,
+  defaultRecordingTitle,
+  inferWindowTitleFromDisplayStream,
+} from "@/lib/recording-title";
+import {
+  captureVideoThumbnailBlob,
+  uploadRecordingThumbnail,
+} from "@/lib/thumbnail-capture";
 import { cn } from "@/lib/utils";
 
 // Client-side app-state writer (the server module pulls in Node's `events`
@@ -73,20 +74,17 @@ async function writeAppState(key: string, value: unknown): Promise<void> {
     },
   );
 }
-import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
-import { CaptureInstallButton } from "@/components/capture-install-options";
 import { toast } from "sonner";
 
-import { PreRecordPanel } from "@/components/recorder/pre-record-panel";
-import { StorageSetupCard } from "@/components/recorder/storage-setup-card";
-import { CountdownOverlay } from "@/components/recorder/countdown-overlay";
+import { CaptureInstallButton } from "@/components/capture-install-options";
 import { CameraBubble } from "@/components/recorder/camera-bubble";
-import { RecordingToolbar } from "@/components/recorder/recording-toolbar";
+import type { CameraBubbleSize } from "@/components/recorder/camera-bubble";
 import {
   ConfettiCanvas,
   type ConfettiHandle,
 } from "@/components/recorder/confetti-canvas";
+import { CountdownOverlay } from "@/components/recorder/countdown-overlay";
+import { PreRecordPanel } from "@/components/recorder/pre-record-panel";
 import {
   RecorderEngine,
   NO_MIC_DEVICE_ID,
@@ -94,7 +92,10 @@ import {
   type RecorderFinalizeResult,
   type RecordingMode,
 } from "@/components/recorder/recorder-engine";
-import type { CameraBubbleSize } from "@/components/recorder/camera-bubble";
+import { RecordingToolbar } from "@/components/recorder/recording-toolbar";
+import { StorageSetupCard } from "@/components/recorder/storage-setup-card";
+import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 
 export function meta() {
   return [{ title: "New recording — Clips" }];
@@ -661,7 +662,7 @@ function RecordingErrorCard({
           {friendlyMessage}
         </p>
         {showTechnicalDetails && (
-          <details className="mt-3 text-left text-xs text-muted-foreground">
+          <details className="mt-3 text-start text-xs text-muted-foreground">
             <summary className="cursor-pointer font-medium text-foreground">
               Technical details
             </summary>
@@ -673,7 +674,7 @@ function RecordingErrorCard({
       </div>
 
       {guidance && (
-        <div className="border-b border-border bg-muted/25 px-6 py-4 text-left">
+        <div className="border-b border-border bg-muted/25 px-6 py-4 text-start">
           <div className="text-xs font-medium text-foreground">
             What to check
           </div>
@@ -874,6 +875,8 @@ export default function RecordRoute() {
     displaySurface: DisplaySurface;
     micDeviceId: string | null;
     cameraDeviceId: string | null;
+    cameraBlur: boolean;
+    cameraBlurRadius: number;
   } | null>(null);
   const tickRef = useRef<number | null>(null);
   const previewVideoRef = useRef<HTMLVideoElement>(null);
@@ -949,6 +952,8 @@ export default function RecordRoute() {
       displaySurface: DisplaySurface;
       micDeviceId: string | null;
       cameraDeviceId: string | null;
+      cameraBlur: boolean;
+      cameraBlurRadius: number;
     }) => {
       const blockedFeature = isEmbeddedWindow()
         ? getPolicyBlockedCaptureLabel({
@@ -994,6 +999,8 @@ export default function RecordRoute() {
           micDeviceId: opts.micDeviceId,
           cameraDeviceId: opts.cameraDeviceId,
           cameraBubbleSize: cameraSize,
+          cameraBlur: opts.cameraBlur,
+          cameraBlurRadius: opts.cameraBlurRadius,
           uploadUrl: "",
           abortUrl: "",
           onError: (err) => {
@@ -1006,6 +1013,13 @@ export default function RecordRoute() {
           // recording keeps going; just let the user know what happened.
           onWarning: (message) => {
             toast.warning(message);
+          },
+          // Camera ended (unplugged / revoked): drop the on-page bubble, and in
+          // camera-only mode clear the fullscreen preview too (it renders from
+          // previewStream) so neither freezes on the last frame.
+          onCameraEnded: () => {
+            setCameraStream(null);
+            if (opts.mode === "camera") setPreviewStream(null);
           },
           // Track the surface the user actually chose (and any mid-recording
           // switch) so the live camera bubble is hidden only when the full
@@ -2107,9 +2121,9 @@ export default function RecordRoute() {
             void doCancel();
             navigate("/library");
           }}
-          className="fixed left-4 top-4 z-30 inline-flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="fixed start-4 top-4 z-30 inline-flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          <IconArrowLeft className="h-5 w-5" />
+          <IconArrowLeft className="h-5 w-5 rtl:-scale-x-100" />
         </button>
       )}
 
@@ -2151,7 +2165,7 @@ export default function RecordRoute() {
               )}
             </div>
             {!isDesktopApp && (
-              <div className="mx-auto mt-4 w-full max-w-md xl:absolute xl:left-[calc(50%+18rem)] xl:top-0 xl:mt-0 xl:w-72">
+              <div className="mx-auto mt-4 w-full max-w-md xl:absolute xl:start-[calc(50%+18rem)] xl:top-0 xl:mt-0 xl:w-72">
                 <DesktopRecorderCallout />
               </div>
             )}

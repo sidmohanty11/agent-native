@@ -2,7 +2,20 @@ import {
   SettingsPanel,
   useDevMode,
   ChangelogSettingsCard,
+  LanguagePicker,
+  openAgentSettings,
+  useT,
 } from "@agent-native/core/client";
+
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+
 import changelog from "../../CHANGELOG.md?raw";
 
 export function meta() {
@@ -11,6 +24,7 @@ export function meta() {
 
 export default function SettingsRoute() {
   const { isDevMode, canToggle, setDevMode } = useDevMode();
+  const t = useT();
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-background">
@@ -20,6 +34,37 @@ export default function SettingsRoute() {
         showDevToggle={canToggle}
       />
       <div className="mx-auto w-full max-w-2xl px-4 pb-8">
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="text-base">
+              {t("settings.languageTitle")}
+            </CardTitle>
+            <CardDescription>
+              {t("settings.languageDescription")}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="max-w-xs space-y-1.5">
+            <Label>{t("settings.languageLabel")}</Label>
+            <LanguagePicker label={t("settings.languageLabel")} />
+          </CardContent>
+        </Card>
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="text-base">
+              {t("settings.agentTitle")}
+            </CardTitle>
+            <CardDescription>{t("settings.agentDescription")}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <button
+              type="button"
+              className="inline-flex h-9 items-center justify-center rounded-md border border-input bg-background px-3 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
+              onClick={() => openAgentSettings()}
+            >
+              {t("settings.openAgentSettings")}
+            </button>
+          </CardContent>
+        </Card>
         <ChangelogSettingsCard markdown={changelog} />
       </div>
     </div>

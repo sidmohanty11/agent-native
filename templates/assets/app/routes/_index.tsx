@@ -1,13 +1,16 @@
-import { useCallback, useEffect, useState } from "react";
 import {
   AgentChatSurface,
   getBrowserTabId,
   markAgentChatHomeHandoff,
   readClientAppState,
   sendToAgentChat,
+  useT,
   writeClientAppState,
 } from "@agent-native/core/client";
 import { IconPhoto, IconSparkles, IconVideo } from "@tabler/icons-react";
+import { useCallback, useEffect, useState } from "react";
+import { useNavigate, useParams } from "react-router";
+
 import { ASSETS_CHAT_STORAGE_KEY } from "@/lib/chat";
 
 // The composer's model picker shows the chat LLM (Claude/OpenAI/Gemini). The
@@ -61,7 +64,14 @@ export function meta() {
   ];
 }
 
+function chatThreadPath(threadId: string | null) {
+  return threadId ? `/chat/${encodeURIComponent(threadId)}` : "/";
+}
+
 export default function CreatePage() {
+  const { threadId } = useParams();
+  const navigate = useNavigate();
+  const t = useT();
   const [imageModel, setImageModel] = useState<string>(DEFAULT_IMAGE_MODEL);
 
   useEffect(() => {
@@ -113,6 +123,11 @@ export default function CreatePage() {
         className="assets-create-chat-panel"
         defaultMode="chat"
         storageKey={ASSETS_CHAT_STORAGE_KEY}
+        threadUrlSync={{
+          routeThreadId: threadId ?? null,
+          getPath: chatThreadPath,
+          navigate,
+        }}
         browserTabId={getBrowserTabId()}
         imageModelMenu={{
           value: imageModel,
@@ -121,26 +136,23 @@ export default function CreatePage() {
             label: option.label,
           })),
           onChange: handleImageModelChange,
-          label: "Image model",
+          label: t("create.imageModel"),
         }}
         showHeader={false}
         showTabBar={false}
         dynamicSuggestions={false}
         suggestions={[]}
-        emptyStateText="Ask Assets what to create."
+        emptyStateText={t("create.emptyState")}
         emptyStateDisplay="hidden"
         centerComposerWhenEmpty
         composerLayoutVariant="hero"
-        composerPlaceholder="Describe the asset - attach images or text context with +"
+        composerPlaceholder={t("create.composerPlaceholder")}
         composerSlot={
           <div className="assets-create-chat-intro">
-            <h1>What asset should we make?</h1>
-            <p>
-              Start with a hero image, product reveal, reference edit, or a
-              direction you want to explore.
-            </p>
+            <h1>{t("create.heroTitle")}</h1>
+            <p>{t("create.heroDescription")}</p>
             <div className="assets-create-chat-pill-row">
-              {CHAT_STARTERS.map(({ key, Icon, label, prompt }) => (
+              {CHAT_STARTERS.map(({ key, Icon, prompt }) => (
                 <button
                   key={key}
                   type="button"
@@ -153,7 +165,7 @@ export default function CreatePage() {
                   }
                 >
                   <Icon className="size-3.5" />
-                  {label}
+                  {t(`create.starters.${key}`)}
                 </button>
               ))}
             </div>

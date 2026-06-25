@@ -1,23 +1,26 @@
 import { defineAction, embedApp } from "@agent-native/core";
 import {
+  hasCollabState,
+  applyText,
+  seedFromText,
+} from "@agent-native/core/collab";
+import {
   getRequestUserEmail,
   getRequestOrgId,
   buildDeepLink,
 } from "@agent-native/core/server";
 import { z } from "zod";
+
 import { getDashboard, upsertDashboard } from "../server/lib/dashboards-store";
+import { validateFirstPartyAnalyticsSql } from "../server/lib/first-party-analytics.js";
 import {
+  buildFirstPartyDashboardFilters,
   buildPanel,
   listMetricKeys,
   type ComposedPanel,
   type MetricWindow,
+  usesFirstPartyDashboardFilters,
 } from "../server/lib/first-party-metric-catalog";
-import { validateFirstPartyAnalyticsSql } from "../server/lib/first-party-analytics.js";
-import {
-  hasCollabState,
-  applyText,
-  seedFromText,
-} from "@agent-native/core/collab";
 
 /**
  * Push the saved config through the collab layer so open dashboard editors get
@@ -96,6 +99,32 @@ const metricSchema = z.union([
 ]);
 
 const METRIC_KEYS = listMetricKeys();
+
+function filterId(filter: unknown): string | null {
+  if (!filter || typeof filter !== "object" || Array.isArray(filter)) {
+    return null;
+  }
+  const id = (filter as { id?: unknown }).id;
+  return typeof id === "string" && id.trim() ? id : null;
+}
+
+function withFirstPartyDashboardFilters(
+  config: Record<string, unknown>,
+): Record<string, unknown> {
+  const filters = Array.isArray(config.filters) ? [...config.filters] : [];
+  const existingIds = new Set(
+    filters
+      .map((filter) => filterId(filter))
+      .filter((id): id is string => id !== null),
+  );
+  for (const filter of buildFirstPartyDashboardFilters()) {
+    if (!existingIds.has(filter.id)) {
+      filters.push(filter);
+      existingIds.add(filter.id);
+    }
+  }
+  return { ...config, filters };
+}
 
 export default defineAction({
   description:
@@ -247,6 +276,12 @@ export default defineAction({
           "First-party analytics dashboard composed from the metric catalog.",
         panels: composedPanels,
       };
+    }
+
+    if (
+      composedPanels.some((panel) => usesFirstPartyDashboardFilters(panel.sql))
+    ) {
+      finalConfig = withFirstPartyDashboardFilters(finalConfig);
     }
 
     const panelCount = Array.isArray(finalConfig.panels)

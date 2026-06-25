@@ -1,11 +1,34 @@
 import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type PointerEvent as ReactPointerEvent,
-  type ReactNode,
-} from "react";
+  emailToName,
+  useActionMutation,
+  useSession,
+} from "@agent-native/core/client";
+import type {
+  AddContentDatabaseSourceFieldPropertyRequest,
+  ContentDatabaseResponse,
+  ContentDatabaseSourceFieldPropertyResponse,
+  ContentDatabaseSource,
+  DocumentProperty,
+} from "@shared/api";
+import {
+  CREATABLE_DOCUMENT_PROPERTY_TYPES,
+  DOCUMENT_PROPERTY_TYPE_LABELS,
+  DOCUMENT_PROPERTY_VISIBILITY_LABELS,
+  DOCUMENT_PROPERTY_VISIBILITIES,
+  defaultPropertyOptions,
+  documentPropertyDateIncludesTime,
+  documentPropertyDateKey,
+  documentPropertyDatePart,
+  isEmptyPropertyValue,
+  isComputedPropertyType,
+  isOnlyBlocksFieldDeletion,
+  normalizeDatePropertyValue,
+  type DocumentPropertyDateValue,
+  type DocumentPropertyOption,
+  type DocumentPropertyOptionColor,
+  type DocumentPropertyType,
+  type DocumentPropertyVisibility,
+} from "@shared/properties";
 import {
   IconAlignLeft,
   IconAt,
@@ -38,12 +61,17 @@ import {
   IconUserCircle,
   type Icon,
 } from "@tabler/icons-react";
-import {
-  emailToName,
-  useActionMutation,
-  useSession,
-} from "@agent-native/core/client";
 import { useQueryClient } from "@tanstack/react-query";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
+import { toast } from "sonner";
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -73,8 +101,10 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Spinner } from "@/components/ui/spinner";
-import { cn } from "@/lib/utils";
-import { toast } from "sonner";
+import {
+  applySourceFieldPropertyToDatabaseResponse,
+  contentDatabaseQueryKey,
+} from "@/hooks/use-content-database";
 import {
   useConfigureDocumentProperty,
   useDeleteDocumentProperty,
@@ -82,38 +112,14 @@ import {
   useDuplicateDocumentProperty,
   useSetDocumentProperty,
 } from "@/hooks/use-document-properties";
-import { applySourceFieldPropertyToDatabaseResponse } from "@/hooks/use-content-database";
-import {
-  CREATABLE_DOCUMENT_PROPERTY_TYPES,
-  DOCUMENT_PROPERTY_TYPE_LABELS,
-  DOCUMENT_PROPERTY_VISIBILITY_LABELS,
-  DOCUMENT_PROPERTY_VISIBILITIES,
-  defaultPropertyOptions,
-  documentPropertyDateIncludesTime,
-  documentPropertyDateKey,
-  documentPropertyDatePart,
-  isEmptyPropertyValue,
-  isComputedPropertyType,
-  isOnlyBlocksFieldDeletion,
-  normalizeDatePropertyValue,
-  type DocumentPropertyDateValue,
-  type DocumentPropertyOption,
-  type DocumentPropertyOptionColor,
-  type DocumentPropertyType,
-  type DocumentPropertyVisibility,
-} from "@shared/properties";
-import type {
-  AddContentDatabaseSourceFieldPropertyRequest,
-  ContentDatabaseResponse,
-  ContentDatabaseSourceFieldPropertyResponse,
-  ContentDatabaseSource,
-  DocumentProperty,
-} from "@shared/api";
+import { cn } from "@/lib/utils";
+
 import { imageUploadErrorMessage, uploadImageFile } from "./image-upload";
 
 interface DocumentPropertiesProps {
   documentId: string;
   canEdit: boolean;
+  databaseDocumentId?: string;
   popoversPortalled?: boolean;
 }
 
@@ -643,6 +649,7 @@ function scalarPlaceholder(type: DocumentPropertyType) {
 export function DocumentProperties({
   documentId,
   canEdit,
+  databaseDocumentId = documentId,
   popoversPortalled = true,
 }: DocumentPropertiesProps) {
   const { data, isLoading } = useDocumentProperties(documentId);
@@ -681,6 +688,7 @@ export function DocumentProperties({
       {canEdit && hiddenProperties.length > 0 ? (
         <HiddenPropertiesMenu
           documentId={documentId}
+          databaseDocumentId={databaseDocumentId}
           properties={hiddenProperties}
         />
       ) : null}
@@ -688,6 +696,7 @@ export function DocumentProperties({
       {canEdit && databaseId ? (
         <AddProperty
           documentId={documentId}
+          databaseDocumentId={databaseDocumentId}
           popoversPortalled={popoversPortalled}
         />
       ) : null}
@@ -706,12 +715,17 @@ function isPropertyVisible(property: DocumentProperty) {
 
 function HiddenPropertiesMenu({
   documentId,
+  databaseDocumentId,
   properties,
 }: {
   documentId: string;
+  databaseDocumentId: string;
   properties: DocumentProperty[];
 }) {
-  const configure = useConfigureDocumentProperty(documentId);
+  const configure = useConfigureDocumentProperty(
+    documentId,
+    databaseDocumentId,
+  );
 
   async function showProperty(property: DocumentProperty) {
     await configure.mutateAsync({
@@ -2319,6 +2333,7 @@ function OptionValueEditor({
 
 export function AddProperty({
   documentId,
+  databaseDocumentId = documentId,
   variant = "default",
   label = "Add property",
   popoversPortalled = true,
@@ -2326,13 +2341,17 @@ export function AddProperty({
   sources,
 }: {
   documentId: string;
+  databaseDocumentId?: string;
   variant?: "default" | "header" | "icon";
   label?: string;
   popoversPortalled?: boolean;
   source?: ContentDatabaseSource | null;
   sources?: ContentDatabaseSource[];
 }) {
-  const configure = useConfigureDocumentProperty(documentId);
+  const configure = useConfigureDocumentProperty(
+    documentId,
+    databaseDocumentId,
+  );
   const queryClient = useQueryClient();
   const addSourceFieldProperty = useActionMutation<
     ContentDatabaseSourceFieldPropertyResponse,
@@ -2340,7 +2359,7 @@ export function AddProperty({
   >("add-content-database-source-field-property", {
     onSuccess: (data) => {
       queryClient.setQueriesData<ContentDatabaseResponse>(
-        { queryKey: ["action", "get-content-database"] },
+        { queryKey: contentDatabaseQueryKey(databaseDocumentId) },
         (current) => applySourceFieldPropertyToDatabaseResponse(current, data),
       );
       queryClient.invalidateQueries({
@@ -2349,7 +2368,6 @@ export function AddProperty({
     },
   });
   const [open, setOpen] = useState(false);
-  const [name, setName] = useState("");
   const [typeQuery, setTypeQuery] = useState("");
   const filteredPropertyTypes = filterDocumentPropertyTypes(typeQuery);
   const firstFilteredPropertyType = filteredPropertyTypes[0] ?? null;
@@ -2377,19 +2395,18 @@ export function AddProperty({
         }),
     }))
     .filter((group) => group.fields.length > 0);
-  const addPropertyNameInputRef = useRef<HTMLInputElement>(null);
+  const addPropertySearchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
     const frame = requestAnimationFrame(() => {
-      addPropertyNameInputRef.current?.focus();
-      addPropertyNameInputRef.current?.select();
+      addPropertySearchInputRef.current?.focus();
+      addPropertySearchInputRef.current?.select();
     });
     return () => cancelAnimationFrame(frame);
   }, [open]);
 
   function closeAddPropertyPicker() {
-    setName("");
     setTypeQuery("");
     setOpen(false);
   }
@@ -2398,7 +2415,7 @@ export function AddProperty({
     const label = DOCUMENT_PROPERTY_TYPE_LABELS[type];
     await configure.mutateAsync({
       documentId,
-      name: name.trim() || label,
+      name: label,
       type,
       options: defaultPropertyOptions(type),
     });
@@ -2445,23 +2462,11 @@ export function AddProperty({
         className="w-80 p-2"
       >
         <div className="grid gap-2">
-          <Input
-            ref={addPropertyNameInputRef}
-            aria-label="New property name"
-            autoFocus
-            value={name}
-            placeholder="Property name"
-            onChange={(event) => setName(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                event.preventDefault();
-                closeAddPropertyPicker();
-              }
-            }}
-          />
           <div className="flex h-8 items-center gap-1 rounded border border-border bg-background px-2">
             <IconSearch className="size-3.5 shrink-0 text-muted-foreground" />
             <Input
+              ref={addPropertySearchInputRef}
+              autoFocus
               value={typeQuery}
               placeholder="Search property types"
               aria-label="Search property types"
