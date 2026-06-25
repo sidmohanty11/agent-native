@@ -101,18 +101,20 @@ describe("embedApp", () => {
     expect(html).toContain('render.frame === "transplant"');
     expect(html).toContain("isClaudeMcpContentHost()");
     expect(html).toContain("if (isClaudeMcpContentHost()) return true;");
+    // ChatGPT is excluded from the transplant set — it uses the controlled
+    // nested frame, not cross-origin import() inside its sandbox.
     expect(html).toContain(
+      "isClaudeMcpContentHost() ||\n        isNativeMcpAppsBridgeHost()",
+    );
+    expect(html).not.toContain(
       "isClaudeMcpContentHost() ||\n        isChatGptSandboxHost()",
     );
-    // Standards-track MCP Apps hosts (Codex, Cursor, the SDK App fallback, and
-    // our own renderer) connect through the postMessage `ui/*` bridge rather
-    // than ChatGPT's `window.openai` global. They render the resource in a
-    // strict opaque-origin sandbox where self-navigation tears the host bridge
-    // down and shows a permanent / flashing loading state, so they must
-    // transplant the app document like Claude does.
+    // ui/* bridge hosts (Cursor, Codex) render in a nested child iframe, not
+    // by self-navigating or transplanting the document.
     expect(html).toContain("function isNativeMcpAppsBridgeHost()");
     expect(html).toContain("return !!app && !openAiBridge;");
     expect(html).toContain("isNativeMcpAppsBridgeHost() ||");
+    expect(html).toContain("if (isNativeMcpAppsBridgeHost()) return false;");
     expect(html).toContain(
       'message.method === "ui/notifications/host-context-changed"',
     );

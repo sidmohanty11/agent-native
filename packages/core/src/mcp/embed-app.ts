@@ -1190,6 +1190,9 @@ export function embedApp(
       if (isClaudeMcpContentHost()) return true;
       if (mode === "iframe" || mode === "nested") return false;
       if (render.nested || render.frame === "iframe") return false;
+      // ui/* bridge hosts (Cursor, Codex) render the app in a nested child
+      // iframe rather than transplanting or self-navigating.
+      if (isNativeMcpAppsBridgeHost()) return false;
       return true;
     }
 
@@ -1212,9 +1215,11 @@ export function embedApp(
       if (mode === "iframe" || mode === "nested" || render.frame === "iframe" || render.nested) {
         return false;
       }
+      // ChatGPT is excluded so it uses the controlled nested frame instead:
+      // transplant would cross-origin import() app chunks in its opaque-origin
+      // sandbox, which it blocks (blank embed). embedMode "transplant" still forces it.
       return (
         isClaudeMcpContentHost() ||
-        isChatGptSandboxHost() ||
         isNativeMcpAppsBridgeHost() ||
         mode === "transplant" ||
         render.frame === "transplant"
