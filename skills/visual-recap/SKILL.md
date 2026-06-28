@@ -41,8 +41,10 @@ In local-files mode:
   reachable or a local Plan app is already running. For `checklist` and `question-form`,
   copy the catalog examples verbatim: checklist items need `id` and `label`;
   question-form questions need `id`, `title`, and `mode`; and each option needs
-  `id` and `label`. `plan local check` validates these required fields against
-  the renderer schema.
+  `id` and `label`. `plan local check` is a quick OFFLINE lint that catches the
+  common cases but is a subset of the renderer schema — a green `check` does not
+  guarantee the plan renders. `plan local verify` is authoritative: it validates
+  the folder against the real renderer schema (run it before handing off).
 - Write the recap as a local MDX folder: use `plans/<slug>/` when the user
   wants the artifact checked into the repo, or use a repo-ignored/temporary
   folder such as `.agent-native/plans/<slug>/` or `/tmp/agent-native-plans/<slug>/`
@@ -67,9 +69,13 @@ In local-files mode:
 - For headless verification, run
   `npx @agent-native/core@latest plan local verify --dir <plan-dir> --kind recap`.
   It starts the bridge, checks the private-network preflight and JSON payload,
-  prints diagnostics, and exits. If the browser hangs on "Loading plan", fetch
-  the `bridgeUrl` from the verify/serve JSON to read the concrete validation
-  error.
+  AND validates the content against the real renderer schema via the Plan app's
+  `validate-local-plan-source` action. A non-`ok` result with `validation.valid:
+  false` lists the renderer's exact schema-path issues (e.g.
+  `blocks[1].data.tabs[0]...`); fix those before handing off. If
+  `validation.ran` is `false`, the Plan app did not expose the validate endpoint
+  (older/unreachable deploy) — point `--app-url` at a current Plan app
+  (e.g. a local `http://localhost:8096`) for the authoritative check.
 - Do **not** call `create-visual-recap`, `create-visual-plan`,
   `import-visual-plan-source`, `update-visual-plan`,
   `patch-visual-plan-source`, `get-plan-feedback`, `export-visual-plan`,
