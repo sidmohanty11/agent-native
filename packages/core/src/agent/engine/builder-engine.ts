@@ -13,18 +13,7 @@
  * BUILDER_GATEWAY_BASE_URL.
  */
 
-import type {
-  AgentEngine,
-  EngineCapabilities,
-  EngineContentPart,
-  EngineEvent,
-  EngineStreamOptions,
-} from "./types.js";
-import {
-  engineMessagesToBuilderGatewayAnthropic,
-  engineToolsToAnthropic,
-} from "./translate-anthropic.js";
-import { getBuilderGatewayRequestHeaders } from "./builder-gateway-headers.js";
+import { captureError } from "../../server/capture-error.js";
 import {
   clearBuilderCredentialAuthFailure,
   resolveBuilderCredentials,
@@ -35,13 +24,24 @@ import {
   normalizeReasoningEffortForModel,
   type ReasoningEffort,
 } from "../../shared/reasoning-effort.js";
+import { BUILDER_MODEL_CONFIG } from "../model-config.js";
+import { getBuilderGatewayRequestHeaders } from "./builder-gateway-headers.js";
 import {
   LLM_MISSING_CREDENTIALS_ERROR_CODE,
   LLM_MISSING_CREDENTIALS_MESSAGE,
 } from "./credential-errors.js";
-import { BUILDER_MODEL_CONFIG } from "../model-config.js";
-import { captureError } from "../../server/capture-error.js";
 import { resolveMaxOutputTokensForEngine } from "./output-tokens.js";
+import {
+  engineMessagesToBuilderGatewayAnthropic,
+  engineToolsToAnthropic,
+} from "./translate-anthropic.js";
+import type {
+  AgentEngine,
+  EngineCapabilities,
+  EngineContentPart,
+  EngineEvent,
+  EngineStreamOptions,
+} from "./types.js";
 
 export const BUILDER_CAPABILITIES: EngineCapabilities = {
   thinking: true,
@@ -58,6 +58,8 @@ export const BUILDER_SUPPORTED_MODELS = BUILDER_MODEL_CONFIG.supportedModels;
 // (Netlify synchronous Functions are 60s) hard-kill the invocation.
 const DEFAULT_BUILDER_GATEWAY_TIMEOUT_MS = 45_000;
 const MAX_BUILDER_GATEWAY_TIMEOUT_MS = 45_000;
+/** Local ai-services has no serverless wall; allow longer streams in dev. */
+const MAX_LOCAL_BUILDER_GATEWAY_TIMEOUT_MS = 180_000;
 const BUILDER_GATEWAY_NETWORK_ERROR_CODE = "builder_gateway_network_error";
 
 export const BUILDER_DEFAULT_MODEL = BUILDER_MODEL_CONFIG.defaultModel;
@@ -92,11 +94,16 @@ function mapReasoningEffort(budgetTokens: number): ReasoningEffort {
  * `/app/organizations/Nicholas%20kipchumba%20Space/billing` which Builder's
  * router treats as unknown and silently bounces to `/app/projects`. The
  * Builder CLI-auth callback doesn't expose the org slug/id today, so we route
- * to the org-agnostic billing page — Builder resolves the active org from
- * session there and users with multiple orgs can switch from that screen.
+ * to the org-agnostic subscription page. Agent Native attribution lets Builder
+ * skip generic onboarding for new users who land there from an upgrade CTA.
  */
 async function buildUpgradeUrl(): Promise<string> {
-  return "https://builder.io/account/billing";
+  const url = new URL("https://builder.io/account/subscription");
+  url.searchParams.set("signupSource", "agent-native");
+  url.searchParams.set("agentNativeConnectSource", "gateway_quota_upgrade");
+  url.searchParams.set("agentNativeFlow", "connect_llm");
+  url.searchParams.set("framework", "agent-native");
+  return url.toString();
 }
 
 interface GatewayErrorBody {
@@ -533,6 +540,10 @@ async function* parseJsonlStream(
           };
           break;
 
+        case "heartbeat":
+          yield { type: "gateway-heartbeat" };
+          break;
+
         case "tool-call": {
           flushPending();
           parts.push({
@@ -749,14 +760,27 @@ export function createBuilderEngine(
   return new BuilderEngine();
 }
 
+function resolveMaxBuilderGatewayTimeoutMs(): number {
+  try {
+    const base = getBuilderGatewayBaseUrl();
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)([:/]|$)/i.test(base)) {
+      return MAX_LOCAL_BUILDER_GATEWAY_TIMEOUT_MS;
+    }
+  } catch {
+    // ignore malformed override
+  }
+  return MAX_BUILDER_GATEWAY_TIMEOUT_MS;
+}
+
 function getBuilderGatewayTimeoutMs(): number {
   const raw = process.env.AGENT_NATIVE_BUILDER_GATEWAY_TIMEOUT_MS;
-  if (!raw) return DEFAULT_BUILDER_GATEWAY_TIMEOUT_MS;
+  const maxMs = resolveMaxBuilderGatewayTimeoutMs();
+  if (!raw) return maxMs;
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed <= 0) {
-    return DEFAULT_BUILDER_GATEWAY_TIMEOUT_MS;
+    return maxMs;
   }
-  return Math.min(parsed, MAX_BUILDER_GATEWAY_TIMEOUT_MS);
+  return Math.min(parsed, maxMs);
 }
 
 function createGatewayAbortSignal(

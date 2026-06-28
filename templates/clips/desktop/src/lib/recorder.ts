@@ -50,13 +50,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
+
+import type { LocalRecordingMode } from "../shared/config";
 import { createAudioCue, type AudioCue } from "./audio-cue";
 import { createCameraCompositeStream } from "./camera-composite";
-import {
-  startTranscriptionCapture,
-  type CapturedTranscript,
-  type TranscriptionCapture,
-} from "./transcription-capture";
 import {
   createLocalRecordingFolderName,
   exportBlobChunksToLocalRecordingFile,
@@ -67,7 +64,11 @@ import {
   type LocalRecordingTarget,
 } from "./local-export";
 import { buildCaptureTitle, type CaptureTitleResult } from "./recording-title";
-import type { LocalRecordingMode } from "../shared/config";
+import {
+  startTranscriptionCapture,
+  type CapturedTranscript,
+  type TranscriptionCapture,
+} from "./transcription-capture";
 
 export type { LocalExportedFile } from "./local-export";
 
@@ -85,12 +86,17 @@ const NATIVE_FULLSCREEN_RECORDING_FLAG = "clips:native-fullscreen-recording";
 const DEV_SYNTHETIC_CAPTURE_FLAG = "clips:dev-synthetic-capture";
 const LEGACY_DEV_REAL_CAPTURE_FLAG = "clips:dev-real-capture";
 const LIVE_UPLOAD_CHUNK_MS = 1_000;
+const NATIVE_FULLSCREEN_SEGMENT_MS = 5 * 60_000;
 const CLOUD_CAPTURE_FRAME_RATE = 24;
 const CLOUD_CAPTURE_MAX_WIDTH = 1920;
 const CLOUD_CAPTURE_MAX_HEIGHT = 1080;
-const CLOUD_RECORDING_MAX_LONG_EDGE = 1280;
-const CLOUD_RECORDING_VIDEO_BITRATE_BPS = 900_000;
-const CLOUD_RECORDING_AUDIO_BITRATE_BPS = 96_000;
+// Crisp capture for the desktop browser MediaRecorder fallback. Files are no
+// longer shrunk client-side and the upload provider streams large files, so we
+// keep full 1080p (was downscaled to a 1280 long edge) and a sharp bitrate (was
+// 900 kbps, which left UI and text fuzzy). Dial down if file size matters.
+const CLOUD_RECORDING_MAX_LONG_EDGE = 1920;
+const CLOUD_RECORDING_VIDEO_BITRATE_BPS = 8_000_000;
+const CLOUD_RECORDING_AUDIO_BITRATE_BPS = 128_000;
 
 function isMacPlatform(): boolean {
   if (typeof navigator === "undefined") return false;
@@ -114,6 +120,13 @@ export function shouldUseNativeFullscreenRecording(
   // Full-screen mode should be one-click on macOS. The native recorder avoids
   // WebKit's old screen/window picker entirely. Set this flag to "0" locally
   // to fall back to getDisplayMedia while debugging that path.
+  return isMacPlatform();
+}
+
+function shouldSaveLocalTranscriptionStartupFailure(): boolean {
+  // Local Whisper/SFSpeech capture is macOS-only today. Non-mac desktop builds
+  // should wait for upload transcription instead of publishing a misleading
+  // native-transcription failure before `request-transcript` runs.
   return isMacPlatform();
 }
 
@@ -957,7 +970,7 @@ async function saveRecordingTranscript(
         recordingId,
         fullText: text,
         segments: transcript.segments,
-        source: "whisper",
+        source: transcript.source ?? "whisper",
       }),
     });
     if (!res.ok) {
@@ -1467,7 +1480,27 @@ async function showRegionGuidesForRecording(wantsScreen: boolean) {
   });
 }
 
+// Frame the chosen screen region with a live border so the user can see exactly
+// what's being captured throughout the countdown and recording. The overlay is
+// capture-excluded and draws its stroke outside the captured pixels, so it never
+// lands in the video. Torn down with the rest of the recording chrome on stop.
+async function showRegionRecordBorder(region: RegionCaptureRect | null) {
+  if (!region) return;
+  await invoke("show_region_record_border", {
+    x: region.x,
+    y: region.y,
+    width: region.width,
+    height: region.height,
+  }).catch((err) => {
+    console.warn("[clips-recorder] show_region_record_border failed:", err);
+  });
+}
+
 async function runRecordingCountdown(wantsScreen: boolean) {
+  // The recording-start chime is intentionally NOT played here. It fires from
+  // `audioCue.playBeforeCapture()` at the real capture-start (right before the
+  // recorder/native capture is kicked off) so the beep lines up with the moment
+  // recording actually begins — not one second early on the countdown's "1".
   const countdownEvent = waitForCountdownEvent(COUNTDOWN_EVENT_TIMEOUT_MS);
   await showRegionGuidesForRecording(wantsScreen);
   try {
@@ -1555,6 +1588,10 @@ async function startNativeFullscreenRecording(
 
     if (params.source === "region") {
       captureRegion = await selectRegionForRecording();
+      // Frame the selected area now so it stays visible through the countdown
+      // and the whole recording. hide_recording_chrome / hide_overlays tear it
+      // down on stop, cancel, and the error paths below.
+      await showRegionRecordBorder(captureRegion);
     }
 
     if (localOnly && localRecordingMode === "separate" && wantsCamera) {
@@ -1724,12 +1761,45 @@ async function startNativeFullscreenRecording(
   let cancelPromise: Promise<void> | null = null;
   let stateUnlistens: UnlistenFn[] = [];
   let tickHandle: ReturnType<typeof setInterval> | null = null;
+  let segmentRotateHandle: ReturnType<typeof setInterval> | null = null;
+  let segmentRotateInFlight = false;
   // Pause/resume tracking. The Rust side actually stops the SCStream on
   // pause and starts a new segment on resume; on stop it concatenates
   // segments via AVFoundation. We keep the JS-side timer in sync so the
   // toolbar / pill show the right paused state and elapsed time.
   let pausedAt: number | null = null;
   let accumulatedPauseMs = 0;
+
+  function clearSegmentRotator() {
+    if (segmentRotateHandle) {
+      clearInterval(segmentRotateHandle);
+      segmentRotateHandle = null;
+    }
+  }
+
+  function startSegmentRotator() {
+    clearSegmentRotator();
+    segmentRotateHandle = setInterval(() => {
+      if (stopped || pausedAt != null || segmentRotateInFlight) return;
+      segmentRotateInFlight = true;
+      invoke("native_fullscreen_recording_rotate_segment")
+        .catch((err) => {
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn("[clips-recorder] native segment rotation failed:", err);
+          if (
+            !stopped &&
+            pausedAt == null &&
+            message.includes("paused recording")
+          ) {
+            pausedAt = Date.now();
+            emitState();
+          }
+        })
+        .finally(() => {
+          segmentRotateInFlight = false;
+        });
+    }, NATIVE_FULLSCREEN_SEGMENT_MS);
+  }
 
   function emitState() {
     const now = Date.now();
@@ -1752,6 +1822,7 @@ async function startNativeFullscreenRecording(
         stopped = true;
         console.log("[clips-recorder] native full-screen stop requested");
         if (!localOnly) showFinalizingFeedback();
+        clearSegmentRotator();
         if (tickHandle) {
           clearInterval(tickHandle);
           tickHandle = null;
@@ -1810,6 +1881,40 @@ async function startNativeFullscreenRecording(
 
         let uploadResult: NativeFullscreenUploadResult | null = null;
         const viewUrl = `/r/${id}`;
+
+        // A native recording runs two ScreenCaptureKit streams: the screen
+        // recorder and the whisper system-audio recognizer (system_audio.rs
+        // opens its own SCStream with captures_audio). Tearing the transcription
+        // stream down while the recorder is flushing its final `moov` atom
+        // interrupts ScreenCaptureKit (RPRecordingErrorDomain -5814,
+        // "Application connection interrupted"), so the recorder's
+        // SCRecordingOutput aborts before the moov is written and the MP4 is left
+        // permanently corrupt. The teardowns must be sequenced: recorder first,
+        // transcription second.
+        //
+        // We also must not delay the recorder stop, or the clip keeps capturing
+        // past the Stop click (Rust measures duration when the stop command
+        // runs, and transcriptionCapture.stop() blocks on a ~1.5s settle).
+        //
+        // So: start the native finalize+upload now, which stops the recorder
+        // capture immediately; wait for Rust to emit that the recorder has
+        // finalized (moov written); only then tear the transcription stream
+        // down. A timeout longer than the Rust finalize ceiling
+        // (SCK_FINALIZE_TIMEOUT) guards against a lost event so Stop can never
+        // hang.
+        let signalRecorderFinalized: () => void = () => {};
+        const recorderFinalized = new Promise<void>((resolve) => {
+          signalRecorderFinalized = resolve;
+        });
+        const unlistenFinalized = await listen<string>(
+          "clips:native-recording-finalized",
+          (event) => {
+            if (!event.payload || event.payload === id) {
+              signalRecorderFinalized();
+            }
+          },
+        );
+
         const uploadPromise = invoke<NativeFullscreenUploadResult>(
           "native_fullscreen_recording_stop_and_upload",
           {
@@ -1823,6 +1928,12 @@ async function startNativeFullscreenRecording(
         );
         uploadPromise.catch(() => {});
         try {
+          await Promise.race([
+            recorderFinalized,
+            new Promise<void>((resolve) => window.setTimeout(resolve, 15000)),
+          ]);
+          unlistenFinalized();
+
           const capturedTranscript = await transcriptionCapture
             ?.stop()
             .catch((err) => {
@@ -1911,6 +2022,7 @@ async function startNativeFullscreenRecording(
       if (stopped) return;
       cancelPromise = (async () => {
         stopped = true;
+        clearSegmentRotator();
         if (tickHandle) {
           clearInterval(tickHandle);
           tickHandle = null;
@@ -1991,6 +2103,7 @@ async function startNativeFullscreenRecording(
   ]);
   stateUnlistens = toolbarUnlistens;
   tickHandle = setInterval(emitState, 500);
+  startSegmentRotator();
   emit("clips:toolbar-enabled", true).catch(() => {});
   emitState();
 
@@ -2012,7 +2125,11 @@ async function startNativeFullscreenRecording(
     if (stopped && transcriptionCapture) {
       void transcriptionCapture.cancel().catch(() => {});
       transcriptionCapture = null;
-    } else if (wantsAudio && !transcriptionCapture) {
+    } else if (
+      wantsAudio &&
+      !transcriptionCapture &&
+      shouldSaveLocalTranscriptionStartupFailure()
+    ) {
       void saveTranscriptFailure(
         "macOS Speech recognition could not start for this recording. Check Speech Recognition and Microphone permissions, then retry transcription.",
       );
@@ -2834,7 +2951,11 @@ async function startRecordingInner(
   if (stopped && transcriptionCapture) {
     void transcriptionCapture.cancel().catch(() => {});
     transcriptionCapture = null;
-  } else if (wantsAudio && !transcriptionCapture) {
+  } else if (
+    wantsAudio &&
+    !transcriptionCapture &&
+    shouldSaveLocalTranscriptionStartupFailure()
+  ) {
     void saveTranscriptFailure(
       "macOS Speech recognition could not start for this recording. Check Speech Recognition and Microphone permissions, then retry transcription.",
     );

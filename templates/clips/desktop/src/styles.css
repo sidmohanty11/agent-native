@@ -1314,6 +1314,17 @@ body[data-clips-route="recording-pill"] #root {
   gap: 6px;
 }
 
+.setup-section-heading {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+
 .setup-advanced {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -1435,6 +1446,10 @@ body[data-clips-route="recording-pill"] #root {
   text-align: left;
   user-select: none;
   transform-origin: var(--radix-tooltip-content-transform-origin);
+}
+
+.tooltip-content-wide {
+  max-width: 320px;
 }
 
 .tooltip-content[data-state="delayed-open"],
@@ -1638,6 +1653,11 @@ body[data-clips-route="recording-pill"] #root {
   font-size: 12px;
 }
 
+.setup-account--no-border {
+  border-top: none;
+  padding-top: 0;
+}
+
 .setup-account-email {
   color: var(--fg-muted);
   overflow: hidden;
@@ -1658,6 +1678,73 @@ body[data-clips-route="recording-pill"] #root {
 
 .link-button:hover {
   background: var(--surface-hover);
+}
+
+.storage-flow-banner {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: var(--radius);
+  background: #eff6ff;
+  color: #1e3a8a;
+}
+
+.storage-flow-icon {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: rgba(59, 130, 246, 0.12);
+  color: #1d4ed8;
+  flex-shrink: 0;
+}
+
+.storage-flow-copy {
+  min-width: 0;
+}
+
+.storage-flow-title {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.storage-flow-sub {
+  margin-top: 3px;
+  color: #3b5f9a;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.storage-flow-connect {
+  grid-column: 2;
+  justify-self: start;
+  height: 28px;
+  border: 1px solid #bfdbfe;
+  border-radius: var(--radius-sm);
+  background: white;
+  color: #1d4ed8;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 9px;
+  font-size: 11px;
+  font-weight: 700;
+  transition:
+    background 120ms,
+    border-color 120ms;
+}
+
+.storage-flow-connect:hover {
+  background: #dbeafe;
+  border-color: #93c5fd;
 }
 
 .pending-upload-banner {
@@ -1704,12 +1791,38 @@ body[data-clips-route="recording-pill"] #root {
   white-space: nowrap;
 }
 
+.pending-upload-sub-wrap {
+  overflow: visible;
+  white-space: normal;
+}
+
+.pending-upload-why {
+  margin-top: 3px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #64748b;
+  cursor: help;
+  font-size: 11px;
+  line-height: 1.2;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+}
+
+.pending-upload-why:hover,
+.pending-upload-why:focus-visible {
+  color: #334155;
+  outline: none;
+}
+
 .pending-upload-actions {
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
 
+.pending-upload-connect,
 .pending-upload-retry {
   height: 28px;
   border: 1px solid #bfdbfe;
@@ -1728,6 +1841,10 @@ body[data-clips-route="recording-pill"] #root {
     background 120ms,
     border-color 120ms,
     opacity 120ms;
+}
+
+.pending-upload-connect {
+  padding: 0 8px;
 }
 
 .pending-upload-discard {
@@ -1773,6 +1890,11 @@ body[data-clips-route="recording-pill"] #root {
   border-color: #93c5fd;
 }
 
+.pending-upload-connect:hover {
+  background: #dbeafe;
+  border-color: #93c5fd;
+}
+
 .pending-upload-folder:hover {
   background: #dbeafe;
   border-color: #93c5fd;
@@ -1785,6 +1907,7 @@ body[data-clips-route="recording-pill"] #root {
 }
 
 .pending-upload-retry:disabled,
+.pending-upload-connect:disabled,
 .pending-upload-folder:disabled,
 .pending-upload-discard:disabled {
   cursor: default;
@@ -1956,6 +2079,16 @@ body[data-clips-route="recording-pill"] #root {
     color: #93c5fd;
   }
 
+  .pending-upload-why {
+    color: #94a3b8;
+  }
+
+  .pending-upload-why:hover,
+  .pending-upload-why:focus-visible {
+    color: #cbd5e1;
+  }
+
+  .pending-upload-connect,
   .pending-upload-retry {
     background: rgba(15, 23, 42, 0.7);
     border-color: rgba(96, 165, 250, 0.38);
@@ -1975,6 +2108,11 @@ body[data-clips-route="recording-pill"] #root {
   }
 
   .pending-upload-retry:hover {
+    background: rgba(30, 64, 175, 0.34);
+    border-color: rgba(147, 197, 253, 0.62);
+  }
+
+  .pending-upload-connect:hover {
     background: rgba(30, 64, 175, 0.34);
     border-color: rgba(147, 197, 253, 0.62);
   }
@@ -2037,13 +2175,101 @@ body[data-clips-route="recording-pill"] #root {
   pointer-events: none;
 }
 
+/*
+ * Horizontal row of [cancel] [number] [skip]. The two circular buttons are
+ * absolutely centered at exactly ±200px (logical) from the row center so the
+ * native cursor-poll hit-rects in clips/mod.rs (CONTROL_OFFSET_X = 200.0,
+ * CONTROL_DIAMETER = 64.0) line up with the rendered controls. Keep these
+ * numbers in sync with that Rust code.
+ */
+.countdown-controls {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.countdown-control {
+  position: absolute;
+  top: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 50%;
+  background: rgba(10, 12, 16, 0.42);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  color: #ffffff;
+  cursor: pointer;
+  pointer-events: auto;
+  backdrop-filter: blur(8px);
+  transform: translateY(-50%);
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.1s ease;
+}
+
+.countdown-control-cancel {
+  /* center at -200px from row center: -200 - (64 / 2) = -232px */
+  left: -232px;
+}
+
+.countdown-control-skip {
+  /* center at +200px from row center: 200 - (64 / 2) = 168px */
+  left: 168px;
+}
+
+.countdown-control:hover {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: rgba(255, 255, 255, 0.95);
+  color: #0b0d12;
+}
+
+.countdown-control:active {
+  transform: translateY(-50%) scale(0.94);
+}
+
+.countdown-control:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.9);
+  outline-offset: 2px;
+}
+
+/*
+ * Absolutely centers the number without contributing width to .countdown-controls.
+ * This keeps the controls div at zero width so the cancel/skip button positions
+ * (left: -232px, left: 168px) line up exactly with the Rust cursor-poll hit-rects
+ * (CONTROL_OFFSET_X = 200.0) measured from the window center.
+ */
+.countdown-number-wrap {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
 .countdown-number {
   font-size: 240px;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
   color: #ffffff;
-  -webkit-text-stroke: 1px rgba(17, 24, 39, 0.22);
+  /*
+   * Do NOT use -webkit-text-stroke here: it joins with a hard miter and no way
+   * to set stroke-linejoin, so at this size/weight the sharp concave corner of
+   * the "2" (where the curved top meets the flat bottom bar) sprouts star-shaped
+   * miter spikes. We fake a soft dark edge with a 4-direction 1px shadow halo
+   * instead, which has no join geometry and cannot spike.
+   */
   text-shadow:
+    1px 0 1px rgba(17, 24, 39, 0.22),
+    -1px 0 1px rgba(17, 24, 39, 0.22),
+    0 1px 1px rgba(17, 24, 39, 0.22),
+    0 -1px 1px rgba(17, 24, 39, 0.22),
     0 2px 4px rgba(0, 0, 0, 0.48),
     0 12px 34px rgba(0, 0, 0, 0.36),
     0 0 2px rgba(0, 0, 0, 0.72);
@@ -2356,8 +2582,12 @@ body[data-clips-route="recording-pill"] #root {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 10px;
+  /* Pin content to the top in BOTH states. The primary controls are
+     centered inside their own fixed-height zone (.toolbar-v-primary), so
+     the collapsed→expanded growth only adds room BELOW them. Without this,
+     flipping justify-content center→flex-start on hover yanked the Stop
+     button up toward the bar's top edge. */
+  justify-content: flex-start;
   /* Equal inset on all four sides from the pill edge to the buttons. */
   padding: 10px;
   overflow: hidden;
@@ -2376,13 +2606,27 @@ body[data-clips-route="recording-pill"] #root {
 
 .toolbar-v:hover,
 .toolbar-v:focus-within {
-  height: 234px;
-  justify-content: flex-start;
+  /* Matches TOOLBAR_EXPANDED_HEIGHT in toolbar.tsx — the fixed 130px primary
+     zone + 88px hover actions (+2 margin) + 20px vertical padding. */
+  height: 240px;
   border-radius: 26px;
 }
 
 .toolbar-v:active {
   cursor: grabbing;
+}
+
+/* Fixed-height home for Stop / time / Pause. Its height equals the collapsed
+   pill's content box (150px − 20px vertical padding = 130px), so the trio is
+   centered exactly as before when collapsed and never shifts when the pill
+   grows on hover — the extra height flows into .toolbar-v-hover-actions below. */
+.toolbar-v-primary {
+  flex: 0 0 130px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
 }
 
 .toolbar-v-stop {
@@ -2554,11 +2798,46 @@ body[data-clips-route="recording-pill"] #root {
   cursor: not-allowed;
 }
 
+.toolbar-v-disk-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #f59e0b;
+  opacity: 0.9;
+  flex-shrink: 0;
+}
+
+.toolbar-v-disk-indicator-critical {
+  color: #ef4444;
+  animation: toolbar-v-disk-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes toolbar-v-disk-pulse {
+  0%,
+  100% {
+    opacity: 0.7;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.toolbar-v-disk-warning {
+  border-color: rgba(245, 158, 11, 0.45);
+}
+
+.toolbar-v-disk-critical {
+  border-color: rgba(239, 68, 68, 0.5);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .toolbar-v,
   .toolbar-v-hover-actions,
   .toolbar-v-action {
     transition: none;
+  }
+  .toolbar-v-disk-indicator-critical {
+    animation: none;
   }
 }
 
@@ -3749,6 +4028,55 @@ body[data-clips-route="recording-pill"] #root {
   backdrop-filter: blur(14px);
 }
 
+/* ------------------------------------------------------------------------- */
+/* Overlay: live recording-region border                                      */
+/* ------------------------------------------------------------------------- */
+
+.region-record-border-layer {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.region-record-border-frame {
+  position: absolute;
+  border-radius: 5px;
+  /* No fill, and the stroke is painted OUTWARD with an outset box-shadow so it
+     lands just outside the captured rect — never inside the recorded video. */
+  box-shadow:
+    0 0 0 2px rgba(239, 68, 68, 0.95),
+    0 0 0 4px rgba(239, 68, 68, 0.32),
+    0 0 26px 6px rgba(239, 68, 68, 0.26);
+  animation: region-record-border-pulse 1.8s ease-in-out infinite;
+}
+
+/* Gentle pulse that mirrors the live recording dot, signalling "recording
+   now". Honour reduced-motion by holding the frame steady. */
+@keyframes region-record-border-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 2px rgba(239, 68, 68, 0.9),
+      0 0 0 4px rgba(239, 68, 68, 0.28),
+      0 0 22px 5px rgba(239, 68, 68, 0.2);
+  }
+  50% {
+    box-shadow:
+      0 0 0 2px rgba(239, 68, 68, 1),
+      0 0 0 4px rgba(239, 68, 68, 0.44),
+      0 0 30px 8px rgba(239, 68, 68, 0.34);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .region-record-border-frame {
+    animation: none;
+  }
+}
+
 @keyframes flow-bar-in {
   from {
     opacity: 0;
@@ -3799,11 +4127,15 @@ body[data-clips-route="recording-pill"] #root {
 }
 
 /* Collapsed (not expanded). Shrinks to dot + waveform; controls revealed via
-   CSS :hover which works at the WebKit level even when the app is unfocused. */
+   CSS :hover which works at the WebKit level even when the app is unfocused.
+   Top-anchored (not centered) inside the headroom-sized window so the hover
+   reveal of the drag grip grows the capsule strictly DOWNWARD — centering it
+   would split the growth and raise the top edge, sliding buttons up under the
+   cursor and causing misclicks. */
 .pill-inner-compact {
   width: fit-content;
   height: fit-content;
-  align-self: center;
+  align-self: flex-start;
   border-radius: 18px;
 }
 
@@ -4055,9 +4387,9 @@ body[data-clips-route="recording-pill"] #root {
 
 .whisper-status {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px 6px;
   margin-top: 6px;
   font-size: 11px;
   line-height: 1.4;
@@ -4092,8 +4424,7 @@ body[data-clips-route="recording-pill"] #root {
 }
 
 .whisper-status-path {
-  display: block;
-  margin-top: 2px;
+  flex-basis: 100%;
   font-size: 10px;
   color: var(--fg-subtle);
   word-break: break-all;

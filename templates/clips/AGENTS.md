@@ -12,6 +12,9 @@ Detailed media, meeting, dictation, editing, and sharing rules live in
 - Never hardcode API keys, tokens, webhook URLs, signing secrets, private Builder/internal data, customer data, or credential-looking literals. Use secrets/OAuth/runtime configuration and obvious placeholders in examples.
 - Use actions for recording metadata, transcripts, cleanup, summaries, chapters,
   comments, spaces/folders, meetings, and sharing. Do not bypass access helpers.
+- Use `move-recording` for both single and bulk folder moves. Pass `id` for one
+  clip or `ids` for selected clips, and `folderId: null` to move them to the
+  library or space root.
 - Recording start/stop/pause are UI gestures because browser media capture needs
   user activation; navigate the user to the recording view instead of trying a
   server action.
@@ -49,30 +52,60 @@ Detailed media, meeting, dictation, editing, and sharing rules live in
   segments; `/api/agent-frame.jpg?id=<recordingId>&atMs=<ms>` for a screen
   frame at a timestamp. Password-protected clips require the password once to
   mint a short-lived token returned inside agent-context links.
+- If public agent context or transcript APIs report `transcript.status` as
+  `"pending"`, wait 15-30 seconds and retry the context/transcript URL a few
+  times, especially for long recordings. Do not pivot straight to frames or tell
+  the user there is no transcript until the retry budget is exhausted.
+- If transcription failed because Builder transcription credits are exhausted,
+  tell the user that clearly and point them to Builder.io credits/upgrade or a
+  Groq key for backup speech-to-text. Generic OpenAI or Anthropic chat keys do
+  not transcribe Clips recordings.
 - Slack unfurls use `/api/slack/unfurl` for `link_shared` events and only
   return playable `chat.unfurl` video blocks for ready public clips with no
   password, no expiry hit, and no archive/trash marker. Private, org-only,
   passworded, expired, or unfinished clips should fall back to normal link
   metadata and require opening Clips.
+- Slack installs should go through the Clips Settings OAuth flow
+  (`connect-slack`, `/api/slack/oauth/callback`) so each Slack workspace gets
+  its own encrypted bot token in `app_secrets`. `SLACK_BOT_TOKEN` is only a
+  legacy single-workspace fallback and must remain behind the team allowlist.
 - Browser recordings can include redacted browser diagnostics captured during
   the recording session. `save-browser-diagnostics` is UI/internal and stores
   bounded console logs plus fetch/XHR method, URL path/query keys, status, and
-  duration; it never captures headers, bodies, cookies, or query values. Use
-  `get-recording-player-data` for full diagnostics when you have editor access;
-  public agent context only exposes a compact issue summary.
+  duration; it never captures headers, bodies, cookies, or network URL query
+  values. Console text keeps useful non-secret values while redacting
+  credential-looking keys/headers. Use `get-recording-player-data` for full
+  diagnostics when you have editor access. Public agent context exposes the
+  redacted console stream (all levels) as `browserDiagnostics.consoleLogs` and
+  the fetch/XHR stream as `browserDiagnostics.networkRequests` (method,
+  sanitized URL with query values redacted, status, duration), plus
+  `consoleIssues` and `failedNetworkRequests` highlights. All bounded; page
+  URL, headers, bodies, and cookies stay omitted.
+- Embedded bug reports use `/bug-report` as an iframe-friendly launcher and
+  `/record?intent=bug-report` for the actual top-level capture flow. The
+  launcher stores redacted host metadata through `save-bug-report-context`; the
+  recording remains the canonical resource and defaults to workspace visibility.
+  Do not present this as anonymous customer intake until a signed intake/upload
+  token flow exists, because the current upload endpoints are owner-scoped.
 - The Chrome extension lives in `chrome-extension/`. It launches `/record` with
   `clipsExtensionId` and `clipsCaptureSessionId`, then the recorder sends
   `CLIPS_CAPTURE_START/STOP/CANCEL` back to the extension. The extension uses
   the Chrome debugger API only on the tab the user launched from, only while a
   recording is active, and returns the same redacted diagnostics shape saved by
   `save-browser-diagnostics`.
+- The Chrome extension also enhances GitHub issue and PR markdown: a narrow
+  `github.com` content script detects Clips `/r/`, `/share/`, and `/embed/`
+  links, then renders the existing `/embed/:id` player in an extension-owned
+  preview iframe so the video is playable without leaving GitHub. Keep this
+  scoped to GitHub unless there is a deliberate permission review.
 - After mutations, rely on the app refresh/polling path; do not invent a second
   sync mechanism.
 
 ## Application State
 
 - `navigation` exposes library, recording, share, meeting, dictation, settings,
-  selected ids, and transcript context.
+  and transcript context. `selection` exposes selected library recording ids
+  when the user is in selection mode.
 - `recording-setup.import` exposes Loom import UI state while the `/record`
   surface is open, without storing the pasted URL in ambient screen context.
 - `navigate` moves the UI to recording/library/meeting/share surfaces.

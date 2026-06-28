@@ -1,14 +1,14 @@
-import { useLocation } from "react-router";
-import type { ReactNode } from "react";
-import { useHeaderTitle, useHeaderActions } from "./HeaderActions";
 import {
   AgentToggleButton,
   NotificationsBell,
 } from "@agent-native/core/client";
+import type { ReactNode } from "react";
+import { useLocation } from "react-router";
+
+import { useHeaderTitle, useHeaderActions } from "./HeaderActions";
 
 const pageTitles: Record<string, string> = {
   "/": "Content",
-  "/team": "Team",
 };
 
 function resolveTitle(pathname: string): string {

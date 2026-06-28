@@ -2,6 +2,8 @@ import {
   isBlockedToolUrl,
   ssrfSafeToolFetch,
 } from "@agent-native/core/tools/url-safety";
+
+import { publicSubmitterEmail } from "../../shared/submitter-email.js";
 import type {
   FormIntegration,
   FormField,
@@ -48,6 +50,64 @@ interface SubmissionPayload {
   activeRunId?: string | null;
   /** Page URL where the feedback was submitted, when available. */
   pageUrl?: string | null;
+  /** Client surface (web/electron/tauri) the feedback came from, when known. */
+  clientSurface?: string | null;
+}
+
+/** Human-readable label for a client-surface token. */
+function clientSurfaceLabel(surface: string): string {
+  switch (surface) {
+    case "electron":
+      return "Desktop (Electron)";
+    case "tauri":
+      return "Desktop (Tauri)";
+    case "web":
+      return "Web";
+    default:
+      return surface;
+  }
+}
+
+/**
+ * Friendly app name derived from a feedback page URL, so a reviewer can tell at
+ * a glance which app the feedback came from. `plan.agent-native.com` → "Plan",
+ * `analytics.agent-native.com` → "Analytics". Returns null when the host isn't a
+ * recognizable per-app subdomain (the full URL still carries the page).
+ */
+function appLabelFromUrl(pageUrl: string): string | null {
+  try {
+    const { hostname } = new URL(pageUrl);
+    const match = hostname.match(/^([a-z0-9-]+)\.agent-native\.com$/i);
+    const sub = match?.[1];
+    if (!sub || sub === "www") return null;
+    return sub
+      .split("-")
+      .map((part) => (part ? part[0].toUpperCase() + part.slice(1) : part))
+      .join(" ");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Readable host+path label for a feedback page URL, used as the visible text of
+ * the Slack link so the app/page is legible inline instead of hidden behind a
+ * bare "open". The full (already client-scrubbed) URL stays the link target.
+ */
+function pageLabelFromUrl(pageUrl: string): string {
+  let label = pageUrl;
+  try {
+    const url = new URL(pageUrl);
+    label = `${url.hostname}${url.pathname}`.replace(/\/$/, "") || url.hostname;
+  } catch {
+    // fall back to the raw string below
+  }
+  if (label.length > 80) label = `${label.slice(0, 79)}…`;
+  // Escape Slack mrkdwn link-text control characters.
+  return label
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 // ---------------------------------------------------------------------------
@@ -82,13 +142,21 @@ function formatDebugContext(submission: SubmissionPayload): string[] {
     lines.push(`Run: \`${submission.activeRunId}\``);
   }
   if (submission.pageUrl) {
-    lines.push(`Page: <${submission.pageUrl}|open>`);
+    const appLabel = appLabelFromUrl(submission.pageUrl);
+    if (appLabel) lines.push(`App: ${appLabel}`);
+    lines.push(
+      `Page: <${submission.pageUrl}|${pageLabelFromUrl(submission.pageUrl)}>`,
+    );
+  }
+  if (submission.clientSurface) {
+    lines.push(`Source: ${clientSurfaceLabel(submission.clientSurface)}`);
   }
   return lines;
 }
 
 /** Slack Block Kit message */
-function buildSlackPayload(submission: SubmissionPayload) {
+export function buildSlackPayload(submission: SubmissionPayload) {
+  const submitterEmail = publicSubmitterEmail(submission.submitterEmail);
   const fieldLines = submission.fields
     .filter((f) => submission.data[f.id] !== undefined)
     .map((f) => {
@@ -98,8 +166,8 @@ function buildSlackPayload(submission: SubmissionPayload) {
     });
 
   const tsContext = `Submitted <!date^${Math.floor(new Date(submission.submittedAt).getTime() / 1000)}^{date_short_pretty} at {time}|${submission.submittedAt}>`;
-  const contextText = submission.submitterEmail
-    ? `${tsContext} by *${submission.submitterEmail}*`
+  const contextText = submitterEmail
+    ? `${tsContext} by *${submitterEmail}*`
     : tsContext;
   const debugContext = formatDebugContext(submission);
 
@@ -135,6 +203,7 @@ function buildSlackPayload(submission: SubmissionPayload) {
 
 /** Discord webhook embed */
 function buildDiscordPayload(submission: SubmissionPayload) {
+  const submitterEmail = publicSubmitterEmail(submission.submitterEmail);
   const discordFields = submission.fields
     .filter((f) => submission.data[f.id] !== undefined)
     .map((f) => {
@@ -142,10 +211,10 @@ function buildDiscordPayload(submission: SubmissionPayload) {
       const display = Array.isArray(val) ? val.join(", ") : String(val);
       return { name: f.label, value: display, inline: true };
     });
-  if (submission.submitterEmail) {
+  if (submitterEmail) {
     discordFields.push({
       name: "Submitted by",
-      value: submission.submitterEmail,
+      value: submitterEmail,
       inline: true,
     });
   }
@@ -170,6 +239,13 @@ function buildDiscordPayload(submission: SubmissionPayload) {
       inline: false,
     });
   }
+  if (submission.clientSurface) {
+    discordFields.push({
+      name: "Source",
+      value: clientSurfaceLabel(submission.clientSurface),
+      inline: true,
+    });
+  }
 
   return {
     embeds: [
@@ -188,10 +264,11 @@ function buildGoogleSheetsPayload(submission: SubmissionPayload) {
   return {
     formTitle: submission.formTitle,
     submittedAt: submission.submittedAt,
-    submitterEmail: submission.submitterEmail ?? "",
+    submitterEmail: publicSubmitterEmail(submission.submitterEmail) ?? "",
     chatSessionIds: (submission.chatSessionIds ?? []).join(", "),
     activeRunId: submission.activeRunId ?? "",
     pageUrl: submission.pageUrl ?? "",
+    clientSurface: submission.clientSurface ?? "",
     ...formatFields(submission.fields, submission.data),
   };
 }
@@ -204,10 +281,11 @@ function buildWebhookPayload(submission: SubmissionPayload) {
     formTitle: submission.formTitle,
     responseId: submission.responseId,
     submittedAt: submission.submittedAt,
-    submitterEmail: submission.submitterEmail ?? null,
+    submitterEmail: publicSubmitterEmail(submission.submitterEmail),
     chatSessionIds: submission.chatSessionIds ?? [],
     activeRunId: submission.activeRunId ?? null,
     pageUrl: submission.pageUrl ?? null,
+    clientSurface: submission.clientSurface ?? null,
     data: formatFields(submission.fields, submission.data),
     rawData: submission.data,
   };

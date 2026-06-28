@@ -34,7 +34,7 @@
 }
 
 .dark {
-  --background: 0 0% 4%;
+  --background: 0 0% 0%;
   --foreground: 0 0% 93%;
   --card: 0 0% 4%;
   --card-foreground: 0 0% 93%;
@@ -460,7 +460,7 @@ h4 {
   font-size: 14px;
   font-weight: 500;
   line-height: 1.4;
-  text-align: left;
+  text-align: start;
 }
 
 .docs-sidebar-section-label {
@@ -538,9 +538,11 @@ h4 {
 
 .docs-sidebar-section-items {
   list-style: none;
-  margin: 2px 0 0 8px;
-  border-left: 1px solid var(--docs-border);
-  padding: 0 0 0 8px;
+  margin: 2px 0 0;
+  margin-inline-start: 8px;
+  border-inline-start: 1px solid var(--docs-border);
+  padding: 0;
+  padding-inline-start: 8px;
 }
 
 .docs-sidebar-section-items li {
@@ -582,7 +584,7 @@ h4 {
   border: 0;
   background: transparent;
   font-family: inherit;
-  text-align: left;
+  text-align: start;
   cursor: pointer;
 }
 
@@ -594,9 +596,11 @@ h4 {
 /* Nested sub-docs (e.g. the plan docs under the Plans group) */
 .docs-sidebar-subitems {
   list-style: none;
-  margin: 2px 0 4px 6px;
-  border-left: 1px solid var(--docs-border);
-  padding: 0 0 0 8px;
+  margin: 2px 0 4px;
+  margin-inline-start: 6px;
+  border-inline-start: 1px solid var(--docs-border);
+  padding: 0;
+  padding-inline-start: 8px;
 }
 
 .docs-sidebar-subitems li {
@@ -666,6 +670,78 @@ h4 {
   position: relative;
 }
 
+.code-block-scroll {
+  position: relative;
+  max-width: 100%;
+  min-width: 0;
+  overflow: auto;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.code-block[data-collapsed="true"] .code-block-scroll {
+  max-height: calc(var(--code-block-max-lines, 30) * 1lh + 32px);
+  overflow: hidden;
+}
+
+.code-block-fade {
+  display: none;
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 56px;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--code-bg) 92%);
+}
+
+.code-block[data-collapsed="true"] .code-block-fade {
+  display: block;
+}
+
+.code-block-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  padding: 7px 14px;
+  border: 1px solid var(--code-border);
+  border-top: 0;
+  border-radius: 0 0 8px 8px;
+  background: var(--code-bg);
+  color: color-mix(in srgb, var(--fg-secondary) 84%, transparent);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+  text-align: center;
+  cursor: pointer;
+}
+
+.code-block-toggle::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  margin-top: -3px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  opacity: 0.8;
+  transform: rotate(45deg);
+  transition:
+    opacity 150ms ease,
+    transform 150ms ease;
+}
+
+.code-block-toggle[aria-expanded="true"]::after {
+  margin-top: 3px;
+  transform: rotate(225deg);
+}
+
+.code-block-toggle:hover {
+  color: var(--fg-secondary);
+  background: color-mix(in srgb, var(--fg-secondary) 8%, var(--code-bg));
+}
+
 /* Copy button injected by MarkdownRenderer into .code-block wrappers */
 .code-copy-btn {
   position: absolute;
@@ -707,6 +783,12 @@ h4 {
   background: var(--code-bg);
 }
 
+.code-block[data-collapsed] pre,
+.code-block[data-collapsed] .shiki {
+  border-bottom-right-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
 /* Token colors come from shiki's per-theme CSS vars; the block background
    always uses our neutral --code-bg palette var (not shiki's theme bg, which
    is blue-tinted in dark and white in light). */
@@ -741,6 +823,93 @@ html.dark .shiki span {
   transition:
     border-color 200ms ease,
     background-color 200ms ease;
+}
+
+.templates-side-scroll {
+  align-items: stretch;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.templates-side-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.template-rail-card {
+  display: flex;
+}
+
+.template-rail-card > .feature-card {
+  width: 100%;
+  height: 100%;
+}
+
+.template-rail-card:not(.template-rail-cta) > .feature-card > p:nth-of-type(1) {
+  display: -webkit-box;
+  min-height: 2.6em;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.template-rail-card:not(.template-rail-cta) > .feature-card > p:nth-of-type(2) {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+.feature-cloud {
+  isolation: isolate;
+  -webkit-mask-image: radial-gradient(
+    ellipse at 54% 50%,
+    #000 0%,
+    #000 46%,
+    rgba(0, 0, 0, 0.62) 62%,
+    transparent 82%
+  );
+  mask-image: radial-gradient(
+    ellipse at 54% 50%,
+    #000 0%,
+    #000 46%,
+    rgba(0, 0, 0, 0.62) 62%,
+    transparent 82%
+  );
+}
+
+.feature-cloud-word {
+  z-index: 1;
+  pointer-events: none;
+  letter-spacing: 0;
+  text-shadow:
+    0 1px 18px rgba(255, 255, 255, 0.9),
+    0 0 1px #fff;
+}
+
+:is(.dark) .feature-cloud-word {
+  text-shadow:
+    0 1px 18px rgba(0, 0, 0, 0.9),
+    0 0 1px #000;
+}
+
+.feature-cloud-row:nth-child(1),
+.feature-cloud-row:nth-child(12) {
+  opacity: 0.55;
+}
+
+.feature-cloud-row:nth-child(2),
+.feature-cloud-row:nth-child(11) {
+  opacity: 0.68;
+}
+
+.feature-cloud-row:nth-child(3),
+.feature-cloud-row:nth-child(10) {
+  opacity: 0.78;
+}
+
+.feature-cloud-row:nth-child(4),
+.feature-cloud-row:nth-child(9) {
+  opacity: 0.88;
 }
 
 .hero-gradient-text {
@@ -1026,14 +1195,13 @@ html.dark .shiki span {
 }
 
 .mobile-docs-nav-trigger svg:last-child {
-  margin-left: auto;
+  margin-inline-start: auto;
   color: var(--fg-secondary);
 }
 
 .mobile-docs-nav-dropdown {
   position: absolute;
-  left: 0;
-  right: 0;
+  inset-inline: 0;
   top: 100%;
   background: var(--bg);
   border-bottom: 1px solid var(--docs-border);
@@ -1073,7 +1241,7 @@ html.dark .shiki span {
 }
 
 .mobile-docs-nav-sublink {
-  padding-left: 36px;
+  padding-inline-start: 36px;
   font-size: 13px;
 }
 
@@ -1095,12 +1263,23 @@ html.dark .shiki span {
   margin-top: 0;
 }
 
-/* Code-bearing blocks (annotated-code walkthroughs, API request/response
- * examples) ship with the block library's own code surface, which is a touch
- * lighter than the docs' code blocks. Align them to `--code-bg` so an embedded
- * code block reads as the same surface as a plain ``` fence on the page. */
-.docs-article .docs-block .bg-plan-code {
+/* Embedded blocks ship with the block library's own surface, which is a touch
+ * lighter than the docs' code blocks (the plan `--muted`, ~#262626 in dark, vs.
+ * our ~#111 code fences). Align inner code surfaces (annotated-code, API
+ * examples) and code-like block containers to the docs code palette
+ * (`--code-bg` / `--code-border`) so an embedded block reads as the same unified
+ * surface as a plain ``` fence on the page. */
+.docs-article .docs-block .bg-plan-code,
+.docs-article .docs-block .bg-plan-block {
   background-color: var(--code-bg) !important;
+}
+.docs-article .docs-block .border-plan-line {
+  border-color: var(--code-border) !important;
+}
+.docs-article .docs-block .plan-diagram-frame {
+  --wf-paper: transparent;
+  border: 0;
+  background: transparent;
 }
 
 /* Prev / Next navigation */
@@ -1161,11 +1340,11 @@ html.dark .shiki span {
 }
 
 .docs-next-link {
-  margin-left: auto;
+  margin-inline-start: auto;
 }
 
 .docs-next-text {
-  text-align: right;
+  text-align: end;
   align-items: flex-end;
 }
 
@@ -1211,6 +1390,10 @@ html.dark .shiki span {
     font-size: 12px;
     padding: 12px;
     border-radius: 6px;
+  }
+
+  .code-block-scroll {
+    font-size: 12px;
   }
 }
 

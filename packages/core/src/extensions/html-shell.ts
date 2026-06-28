@@ -139,9 +139,14 @@ export function buildExtensionHtml(
       if (_extensionErrors.indexOf(message) !== -1) return;
       _extensionErrors.push(message);
       _extensionErrorDetails.push({ message: message, stack: stack || '' });
+      _renderErrorToast();
+    }
+
+    function _renderErrorToast() {
       var toast = document.getElementById('__extension-error-toast');
       if (!toast) return;
       var msg = document.getElementById('__extension-error-msg');
+      if (!msg || _extensionErrors.length === 0) return;
       if (_extensionErrors.length === 1) {
         msg.textContent = _extensionErrors[0];
       } else {
@@ -420,6 +425,53 @@ export function buildExtensionHtml(
 	      return res.body;
 	    }
 
+	    function sendToChat(message, options) {
+	      options = options || {};
+	      var text = typeof message === 'string' ? message : JSON.stringify(message);
+	      window.parent.postMessage({
+	        type: 'agent-native-send-to-chat',
+	        message: text,
+	        context: options.context,
+	        submit: options.submit !== false,
+	        openSidebar: options.openSidebar !== false,
+	      }, '*');
+	      return { ok: true };
+	    }
+
+	    function inlineUiOutputKey() {
+	      var safeId = String(_extensionId || 'unknown').replace(/[^A-Za-z0-9_:-]/g, '') || 'unknown';
+	      return 'inline-ui:' + safeId + ':output';
+	    }
+
+	    async function outputToUi(value, options) {
+	      options = options || {};
+	      var key = inlineUiOutputKey();
+	      var payload = {
+	        value: value,
+	        updatedAt: new Date().toISOString(),
+	        extensionId: _extensionId,
+	        source: 'inline-ui',
+	      };
+	      if (options.label !== undefined) payload.label = options.label;
+	      if (options.context !== undefined) payload.context = options.context;
+	      if (options.meta !== undefined) payload.meta = options.meta;
+	      var output = await appFetch('/_agent-native/application-state/' + key, {
+	        method: 'PUT',
+	        headers: { 'X-Request-Source': 'inline-ui' },
+	        body: JSON.stringify(payload),
+	      });
+	      try {
+	        window.parent.postMessage({
+	          type: 'agent-native-ui-output',
+	          extensionId: _extensionId,
+	          key: key,
+	          value: value,
+	          output: output,
+	        }, '*');
+	      } catch (_) {}
+	      return { ok: true, key: key, output: output };
+	    }
+
     async function dbQuery(sql, args) {
       var body = { sql: sql };
       if (args) body.args = args;
@@ -514,6 +566,25 @@ export function buildExtensionHtml(
 	    var toolFetch = extensionFetch;
 	    var toolData = extensionData;
 	    var _toolId = _extensionId;
+	    window.agentNative = Object.assign(window.agentNative || {}, {
+	      extensionId: _extensionId,
+	      extensionBinding: _extensionBinding,
+	      appAction: appAction,
+	      appFetch: appFetch,
+	      dbQuery: dbQuery,
+	      dbExec: dbExec,
+	      extensionFetch: extensionFetch,
+	      extensionData: extensionData,
+	      data: extensionData,
+	      sendToChat: sendToChat,
+	      chat: Object.assign({}, (window.agentNative && window.agentNative.chat) || {}, {
+	        send: sendToChat,
+	      }),
+	      ui: Object.assign({}, (window.agentNative && window.agentNative.ui) || {}, {
+	        output: outputToUi,
+	      }),
+	    });
+	    window.sendToAgentChat = sendToChat;
 	  </script>
 	  <style>
 	    #__extension-error-toast {
@@ -567,9 +638,10 @@ export function buildExtensionHtml(
 	      });
 	    });
 
-	    // Auto-resize the iframe to its content when running in slot mode. The
-	    // host listens for agent-native-extension-resize and adjusts the iframe height.
-	    if (new URLSearchParams(location.search).get('slot')) {
+	    // Auto-resize iframe renders. Persisted extension slots include ?slot=;
+	    // transient inline chat UI uses srcdoc, so detect that by parent frame.
+	    // The host listens for agent-native-extension-resize and adjusts height.
+	    if (new URLSearchParams(location.search).get('slot') || window.parent !== window) {
 	      var _lastH = 0;
 	      var _reportHeight = function() {
 	        var h = Math.max(
@@ -635,6 +707,7 @@ export function buildExtensionHtml(
 	    });
 
 	    document.addEventListener('DOMContentLoaded', function() {
+	      _renderErrorToast();
 	      var fixBtn = document.getElementById('__extension-error-fix');
 	      if (fixBtn) {
 	        fixBtn.addEventListener('click', function() {

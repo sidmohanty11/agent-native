@@ -7,16 +7,13 @@ import {
 } from "@agent-native/core/server";
 import { asc, eq } from "drizzle-orm";
 import { getRequestURL, setResponseHeader, type H3Event } from "h3";
+
 import {
   buildAgentApiUrls,
   buildRecommendedFrames,
   CLIP_AGENT_CONTEXT_VERSION,
   toAgentTranscriptSegments,
 } from "../../shared/agent-context.js";
-import {
-  normalizeTranscriptSegments,
-  parseTranscriptSegments,
-} from "../../shared/transcript-segments.js";
 import {
   parseBrowserDiagnosticsRow,
   type BrowserDiagnosticsData,
@@ -25,12 +22,19 @@ import {
   isLoomEmbedBackedRecording,
   isLoomRecordingSource,
 } from "../../shared/loom.js";
+import {
+  normalizeTranscriptSegments,
+  parseTranscriptSegments,
+} from "../../shared/transcript-segments.js";
 import { getDb, schema } from "../db/index.js";
 import { verifySharePassword } from "./share-password.js";
 
 export type PublicAgentRecording = typeof schema.recordings._.inferSelect;
 export type PublicAgentTranscript =
   | typeof schema.recordingTranscripts._.inferSelect
+  | null;
+export type PublicAgentBugReport =
+  | typeof schema.recordingBugReports._.inferSelect
   | null;
 
 export interface PublicAgentAccess {
@@ -49,6 +53,23 @@ export type PublicAgentAccessResult =
   | { ok: false; failure: PublicAgentFailure };
 
 const DEFAULT_MAX_AGENT_FRAME_MEDIA_BYTES = 200 * 1024 * 1024;
+
+function sameOwnerEmail(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): boolean {
+  return !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+export class RecordingMediaFetchError extends Error {
+  constructor(
+    message: string,
+    readonly statusCode = 502,
+  ) {
+    super(message);
+    this.name = "RecordingMediaFetchError";
+  }
+}
 
 export function getServerAppBasePath(): string {
   const raw = process.env.VITE_APP_BASE_PATH || process.env.APP_BASE_PATH || "";
@@ -184,7 +205,7 @@ export async function loadPublicAgentAccess(
 
   const session = await getSession(event).catch(() => null);
   const viewerIsOwner = Boolean(
-    session?.email && session.email === recording.ownerEmail,
+    session?.email && sameOwnerEmail(session.email, recording.ownerEmail),
   );
 
   if (recording.visibility !== "public" && !viewerIsOwner) {
@@ -319,37 +340,147 @@ export async function loadAgentBrowserDiagnostics(recordingId: string) {
   return parseBrowserDiagnosticsRow(row);
 }
 
+export async function loadAgentBugReport(
+  recordingId: string,
+): Promise<PublicAgentBugReport> {
+  const [row] = await getDb()
+    .select()
+    .from(schema.recordingBugReports)
+    .where(eq(schema.recordingBugReports.recordingId, recordingId))
+    .limit(1);
+  return row ?? null;
+}
+
+// Most-recent console logs / network requests surfaced in the public agent
+// context. Bounded to keep the agent payload small; the summary still reports
+// the true total counts.
+const MAX_PUBLIC_AGENT_CONSOLE_LOGS = 100;
+const MAX_PUBLIC_AGENT_NETWORK_REQUESTS = 100;
+// Curated warn/error highlights and failed-request highlights.
+const MAX_PUBLIC_AGENT_DIAGNOSTIC_ISSUES = 20;
+
+function toPublicConsoleEntry(
+  entry: BrowserDiagnosticsData["consoleLogs"][number],
+) {
+  return {
+    timestampMs: entry.elapsedMs,
+    level: entry.level,
+    message: entry.message,
+  };
+}
+
+function toPublicNetworkEntry(
+  entry: BrowserDiagnosticsData["networkRequests"][number],
+) {
+  return {
+    timestampMs: entry.elapsedMs,
+    type: entry.type,
+    method: entry.method,
+    // Already sanitized at capture time: path is kept, query values are
+    // redacted, and auth/hash are stripped.
+    url: entry.url,
+    status: entry.status ?? null,
+    error: entry.error ?? null,
+    durationMs: entry.durationMs,
+  };
+}
+
+function isFailedNetworkRequest(
+  entry: BrowserDiagnosticsData["networkRequests"][number],
+): boolean {
+  return (
+    Boolean(entry.error) ||
+    (typeof entry.status === "number" && entry.status >= 400)
+  );
+}
+
 function compactBrowserDiagnostics(diagnostics: BrowserDiagnosticsData | null) {
   if (!diagnostics) return null;
+  // Full console stream (all levels: debug/log/info/warn/error), redacted at
+  // capture time and bounded to the most-recent entries.
+  const consoleLogs = diagnostics.consoleLogs
+    .slice(-MAX_PUBLIC_AGENT_CONSOLE_LOGS)
+    .map(toPublicConsoleEntry);
+  // Warn/error highlights kept as a separate convenience list so agents can
+  // jump straight to problems without scanning the full stream.
   const consoleIssues = diagnostics.consoleLogs
     .filter((entry) => entry.level === "warn" || entry.level === "error")
-    .slice(-20)
-    .map((entry) => ({
-      timestampMs: entry.elapsedMs,
-      level: entry.level,
-      message: entry.message,
-    }));
+    .slice(-MAX_PUBLIC_AGENT_DIAGNOSTIC_ISSUES)
+    .map(toPublicConsoleEntry);
+  // Full network stream (fetch + XHR), redacted at capture time and bounded.
+  const networkRequests = diagnostics.networkRequests
+    .slice(-MAX_PUBLIC_AGENT_NETWORK_REQUESTS)
+    .map(toPublicNetworkEntry);
+  // Failed-request highlights so agents can jump straight to problems.
   const failedNetworkRequests = diagnostics.networkRequests
-    .filter(
-      (entry) =>
-        Boolean(entry.error) ||
-        (typeof entry.status === "number" && entry.status >= 400),
-    )
-    .slice(-20)
-    .map((entry) => ({
-      timestampMs: entry.elapsedMs,
-      type: entry.type,
-      method: entry.method,
-      status: entry.status ?? null,
-      error: entry.error ?? null,
-      durationMs: entry.durationMs,
-    }));
+    .filter(isFailedNetworkRequest)
+    .slice(-MAX_PUBLIC_AGENT_DIAGNOSTIC_ISSUES)
+    .map(toPublicNetworkEntry);
   return {
     summary: diagnostics.summary,
+    consoleLogs,
     consoleIssues,
+    networkRequests,
     failedNetworkRequests,
-    note: "Diagnostics are redacted and bounded; public context omits page URLs, request URLs, headers, bodies, cookies, and query values.",
+    note: "Console logs include all levels (debug/log/info/warn/error). Network requests include method, sanitized URL (path kept, query values redacted), status, and duration. Diagnostics are bounded; the recording's own page URL, request headers, request/response bodies, and cookies are omitted.",
   };
+}
+
+function safeMetadataObject(raw: string | null | undefined) {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function compactBugReport(report: PublicAgentBugReport) {
+  if (!report) return null;
+  return {
+    projectId: report.projectId,
+    title: report.title,
+    description: report.description,
+    severity: report.severity,
+    sourceUrl: report.sourceUrl,
+    pageTitle: report.pageTitle,
+    appVersion: report.appVersion,
+    environment: report.environment,
+    metadata: safeMetadataObject(report.metadataJson),
+    submittedAt: report.submittedAt,
+    note: "Reporter identity fields are omitted from public agent context. Host metadata is redacted and bounded at capture time.",
+  };
+}
+
+export function transcriptStatusInstructions(
+  transcript: PublicAgentTranscript,
+) {
+  const status = transcript?.status ?? "missing";
+  const failureReason = transcript?.failureReason ?? "";
+  const lowerReason = failureReason.toLowerCase();
+
+  if (status === "pending") {
+    return [
+      "The transcript is still pending. For long recordings this can take several minutes; wait 15-30 seconds and fetch apis.context.url or apis.transcript.url again a few times before falling back to frames or telling the user no transcript exists.",
+    ];
+  }
+
+  if (status === "failed" && lowerReason.includes("credits exhausted")) {
+    return [
+      "Transcription failed because Builder transcription credits are exhausted. Tell the user to upgrade or connect Builder.io credits, or configure a Groq key for backup speech-to-text. Generic OpenAI or Anthropic chat keys do not transcribe Clips recordings.",
+    ];
+  }
+
+  if (status === "failed" && failureReason) {
+    return [
+      `Transcription failed with reason: ${failureReason}. Explain this to the user and suggest retrying transcription or configuring the supported Builder.io/Groq transcription fallback.`,
+    ];
+  }
+
+  return [];
 }
 
 export function buildPublicAgentContext({
@@ -360,6 +491,7 @@ export function buildPublicAgentContext({
   chapters,
   ctas,
   browserDiagnostics,
+  bugReport,
 }: {
   event: H3Event;
   access: PublicAgentAccess;
@@ -368,6 +500,7 @@ export function buildPublicAgentContext({
   chapters: ReturnType<typeof parseAgentChapters>;
   ctas: Awaited<ReturnType<typeof loadAgentCtas>>;
   browserDiagnostics?: BrowserDiagnosticsData | null;
+  bugReport?: PublicAgentBugReport;
 }) {
   const recording = access.recording;
   const requestUrl = getRequestURL(event);
@@ -391,9 +524,15 @@ export function buildPublicAgentContext({
       }));
   const instructions = [
     "Use transcript.segments for timestamped spoken context.",
+    ...transcriptStatusInstructions(transcript),
+    ...(bugReport
+      ? [
+          "Use bugReport for the submitted product context: source URL, page title, app version, environment, severity, and redacted host metadata.",
+        ]
+      : []),
     ...(browserDiagnostics
       ? [
-          "Use browserDiagnostics for redacted console warnings/errors and failed network requests captured during the recording.",
+          "Use browserDiagnostics.consoleLogs for the redacted console stream (all levels: debug/log/info/warn/error) and browserDiagnostics.networkRequests for the fetch/XHR requests (method, sanitized URL, status, duration) captured during the recording. browserDiagnostics.consoleIssues highlights just the warnings/errors, and browserDiagnostics.failedNetworkRequests highlights failed requests.",
         ]
       : []),
     ...(isLoomEmbedBacked
@@ -401,8 +540,9 @@ export function buildPublicAgentContext({
           "This clip is a legacy Loom embed import; frame extraction is not available through Clips until it is reimported as a Clips-hosted video.",
         ]
       : [
-          "Use apis.frame.urlTemplate with atMs to fetch a JPEG frame when the spoken transcript references something visible on screen.",
-          "Prefer recommendedFrames first, then request additional frames around transcript timestamps that matter for the task.",
+          "This clip is readable as both text (transcript) and images (JPEG frames) — you can hear AND see it.",
+          "To SEE the screen, GET apis.frame.urlTemplate with atMs (returns image/jpeg). Start with recommendedFrames, then fetch additional frames around transcript timestamps that matter for the task.",
+          "If you cannot load an image from a URL, you will only have the transcript — tell the user to open the clip in an image-capable agent (ChatGPT, Claude Code, Cursor, Codex) or to upload a frame image directly so you can see it.",
         ]),
   ];
 
@@ -448,12 +588,15 @@ export function buildPublicAgentContext({
     transcript: {
       status: transcript?.status ?? "missing",
       language: transcript?.language ?? null,
+      failureReason: transcript?.failureReason ?? null,
+      retryAfterSeconds: transcript?.status === "pending" ? 15 : null,
       fullText: transcript?.fullText ?? "",
       segments: agentSegments,
       segmentCount: agentSegments.length,
     },
     chapters,
     recommendedFrames: suggestedFrames,
+    bugReport: compactBugReport(bugReport ?? null),
     browserDiagnostics: compactBrowserDiagnostics(browserDiagnostics ?? null),
     ctas: ctas.map((cta) => ({
       label: cta.label,
@@ -476,6 +619,22 @@ function pickSourceMimeType(
   const base = (actual ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
   if (!base || base === "application/octet-stream") return fallback;
   return actual ?? fallback;
+}
+
+function statusCodeForMediaFetchError(err: unknown): number {
+  if (err instanceof Error && /^SSRF blocked:/i.test(err.message)) return 403;
+  if (err instanceof Error && /abort|timeout/i.test(err.name)) return 504;
+  return 502;
+}
+
+function messageForMediaFetchError(err: unknown): string {
+  if (err instanceof Error && /^SSRF blocked:/i.test(err.message)) {
+    return "Recording media URL is blocked by server safety policy.";
+  }
+  if (err instanceof Error && /abort|timeout/i.test(err.name)) {
+    return "Recording media fetch timed out.";
+  }
+  return "Recording media could not be fetched.";
 }
 
 export async function loadRecordingMediaBytes(
@@ -525,17 +684,26 @@ export async function loadRecordingMediaBytes(
     resolvedVideoUrl = `${origin}${resolvedVideoUrl}`;
   }
 
-  const response = isAppRelativeUrl
-    ? await fetch(resolvedVideoUrl, { signal: AbortSignal.timeout(30_000) })
-    : await ssrfSafeFetch(
-        resolvedVideoUrl,
-        { signal: AbortSignal.timeout(30_000) },
-        { maxRedirects: 3 },
-      );
+  let response: Response;
+  try {
+    response = isAppRelativeUrl
+      ? await fetch(resolvedVideoUrl, { signal: AbortSignal.timeout(30_000) })
+      : await ssrfSafeFetch(
+          resolvedVideoUrl,
+          { signal: AbortSignal.timeout(30_000) },
+          { maxRedirects: 3 },
+        );
+  } catch (err) {
+    throw new RecordingMediaFetchError(
+      messageForMediaFetchError(err),
+      statusCodeForMediaFetchError(err),
+    );
+  }
 
   if (!response.ok) {
-    throw new Error(
-      `Failed to fetch videoUrl: HTTP ${response.status} ${response.statusText}`,
+    throw new RecordingMediaFetchError(
+      `Recording media fetch failed: HTTP ${response.status} ${response.statusText}`,
+      response.status,
     );
   }
 

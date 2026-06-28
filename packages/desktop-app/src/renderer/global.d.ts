@@ -486,6 +486,25 @@ type DesktopOpenRequest = {
   runId?: string;
 };
 
+type DesktopShortcutActivationRequest = DesktopOpenRequest & {
+  requestId: string;
+};
+
+type DesktopShortcutActivationResult = {
+  handled: boolean;
+  appId?: string;
+  activeAppId?: string;
+};
+
+interface Window {
+  __agentNativeDesktopShortcutBridge?: {
+    getActiveAppId(): string;
+    activate(
+      request: DesktopShortcutActivationRequest,
+    ): DesktopShortcutActivationResult;
+  };
+}
+
 type DesktopShortcutBehavior = "toggle" | "show";
 
 type DesktopShortcutBinding = {
@@ -542,6 +561,9 @@ type LocalAppFolderSelectResult = {
 /** Electron APIs exposed to the renderer via the preload contextBridge */
 interface ElectronAPI {
   platform: string;
+  sentry: {
+    enabled: boolean;
+  };
   webviewPreloadPath: string;
 
   windowControls: {
@@ -567,6 +589,10 @@ interface ElectronAPI {
       request: DesktopShortcutUpsertRequest,
     ): Promise<DesktopShortcutUpdateResult>;
     removeBinding(id: string): Promise<DesktopShortcutUpdateResult>;
+    onActivate(
+      cb: (request: DesktopShortcutActivationRequest) => void,
+    ): () => void;
+    ackActivation(requestId: string, appId?: string): void;
   };
 
   setActiveApp(appId: string): void;

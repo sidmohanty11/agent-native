@@ -1,6 +1,5 @@
 export {
   createServer,
-  upsertEnvFile,
   type CreateServerOptions,
   type EnvKeyConfig,
 } from "./create-server.js";
@@ -78,6 +77,14 @@ export {
 } from "./identity-sso.js";
 export { requireEnvKey, type MissingKeyResponse } from "./missing-key.js";
 export { verifyCaptcha, type CaptchaVerifyResult } from "./captcha.js";
+export {
+  getLocaleInitScript,
+  parseAcceptLanguage,
+  resolveLocaleFromRequest,
+  type LocaleInitScriptOptions,
+  type ResolveLocaleFromRequestOptions,
+  type ResolvedRequestLocale,
+} from "../localization/server.js";
 export {
   createProductionAgentHandler,
   type ActionEntry,
@@ -162,6 +169,7 @@ export type { GoogleAuthMode } from "./google-auth-mode.js";
 export {
   createAgentChatPlugin,
   defaultAgentChatPlugin,
+  refreshGlobalMcpManager,
   type AgentChatPluginOptions,
 } from "./agent-chat-plugin.js";
 export {
@@ -264,6 +272,14 @@ export {
   type SpawnTaskOptions,
 } from "./agent-teams.js";
 export { isOAuthConnected, getOAuthAccounts } from "./oauth-helpers.js";
+export {
+  hasGoogleSignInCredentials,
+  resolveGoogleLegacyProviderCredentials,
+  resolveGoogleProviderCredentialCandidates,
+  resolveGoogleProviderCredentials,
+  resolveGoogleSignInCredentials,
+  type GoogleOAuthCredentials,
+} from "./google-oauth-credentials.js";
 export { wrapWithAnalytics } from "./analytics.js";
 export {
   getH3App,
@@ -308,6 +324,7 @@ export {
   unregisterFileUploadProvider,
   listFileUploadProviders,
   getActiveFileUploadProvider,
+  getActiveFileUploadProviderForRequest,
   uploadFile,
   builderFileUploadProvider,
   type FileUploadInput,
@@ -364,6 +381,7 @@ export {
   resolveHasCompleteBuilderConnection,
   resolveBuilderCredentials,
   resolveBuilderCredential,
+  readDeployCredentialEnv,
   writeBuilderCredentials,
   deleteBuilderCredentials,
   resolveSecret,
@@ -381,6 +399,7 @@ export {
   sendEmail,
   isEmailConfigured,
   getEmailProvider,
+  type EmailAttachment,
   type EmailProvider,
   type SendEmailArgs,
 } from "./email.js";

@@ -46,6 +46,10 @@ review before code changes happen.
   resource paths for the latest code index, file tree, and captured source
   snapshots.
 - `navigate` moves the UI to the plan list or a specific visual plan.
+- The sidebar brand header has a `Customize branding` popover. Treat it as a
+  source-code request, not plan data: local Code mode edits `templates/plan`
+  source directly, while hosted/live surfaces route people to Desktop or
+  Builder for code customization.
 
 ## Normal Planning Flow
 
@@ -168,6 +172,9 @@ sync-guarded skills (not just one stored plan) so the improvement sticks.
 - Use `promote-local-plan-folder` when a temporary local plan should be saved
   into the repo. Its default target is `apps.plan.roots[0].path/<slug>` from
   `agent-native.json`, falling back to `plans/<slug>`.
+- Commit `.plan-state.json` with repo-backed plan folders when present. It is
+  source metadata for stable bare-Markdown block IDs, not a disposable preview
+  cache.
 - Use `import-visual-plan-source` to create or replace a plan from an MDX folder.
 - Use `patch-visual-plan-source` for small source edits by stable semantic IDs.
   It patches the MDX AST, runs formatting, parses back to normalized JSON, and

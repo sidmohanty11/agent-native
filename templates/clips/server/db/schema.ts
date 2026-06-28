@@ -253,6 +253,32 @@ export const recordingBrowserDiagnostics = table(
   },
 );
 
+export const recordingBugReports = table("recording_bug_reports", {
+  recordingId: text("recording_id").primaryKey(),
+  ownerEmail: text("owner_email").notNull().default("local@localhost"),
+  organizationId: text("workspace_id").notNull(),
+  orgId: text("org_id"),
+  projectId: text("project_id"),
+  title: text("title"),
+  description: text("description").notNull().default(""),
+  severity: text("severity", {
+    enum: ["low", "normal", "high", "urgent"],
+  })
+    .notNull()
+    .default("normal"),
+  sourceUrl: text("source_url"),
+  pageTitle: text("page_title"),
+  appVersion: text("app_version"),
+  environment: text("environment"),
+  reporterEmail: text("reporter_email"),
+  reporterName: text("reporter_name"),
+  reporterId: text("reporter_id"),
+  metadataJson: text("metadata_json").notNull().default("{}"),
+  submittedAt: text("submitted_at").notNull().default(now()),
+  createdAt: text("created_at").notNull().default(now()),
+  updatedAt: text("updated_at").notNull().default(now()),
+});
+
 export const recordingCtas = table("recording_ctas", {
   id: text("id").primaryKey(),
   recordingId: text("recording_id").notNull(),
@@ -466,6 +492,41 @@ export const calendarEvents = table("calendar_events", {
   // ISO timestamp from the provider — used so updates don't clobber newer
   // changes from the source calendar.
   providerUpdatedAt: text("provider_updated_at"),
+  createdAt: text("created_at").notNull().default(now()),
+  updatedAt: text("updated_at").notNull().default(now()),
+});
+
+// -----------------------------------------------------------------------------
+// Slack app installs — team-level OAuth grants for Clips app unfurls.
+//
+// Slack webhooks arrive without a Clips user session, so this table is not a
+// framework-shareable resource. It stores only provider metadata and secret
+// references; bot tokens live encrypted in app_secrets.
+// -----------------------------------------------------------------------------
+
+export const slackInstallations = table("slack_installations", {
+  id: text("id").primaryKey(),
+  teamId: text("team_id").notNull(),
+  teamName: text("team_name"),
+  enterpriseId: text("enterprise_id"),
+  enterpriseName: text("enterprise_name"),
+  apiAppId: text("api_app_id"),
+  botUserId: text("bot_user_id"),
+  botTokenSecretRef: text("bot_token_secret_ref").notNull(),
+  secretScope: text("secret_scope", {
+    enum: ["user", "org", "workspace"],
+  }).notNull(),
+  secretScopeId: text("secret_scope_id").notNull(),
+  scope: text("scope"),
+  installedBySlackUserId: text("installed_by_slack_user_id"),
+  ownerEmail: text("owner_email").notNull(),
+  orgId: text("org_id"),
+  status: text("status", {
+    enum: ["connected", "disconnected", "revoked", "error"],
+  })
+    .notNull()
+    .default("connected"),
+  lastError: text("last_error"),
   createdAt: text("created_at").notNull().default(now()),
   updatedAt: text("updated_at").notNull().default(now()),
 });

@@ -1,19 +1,20 @@
 import { defineAction } from "@agent-native/core";
+import type { ActionRunContext } from "@agent-native/core/action";
 import {
   writeAppState,
   deleteAppState,
 } from "@agent-native/core/application-state";
-import { z } from "zod";
-import { nanoid } from "nanoid";
-import { eq } from "drizzle-orm";
-import { assertAccess } from "@agent-native/core/sharing";
 import {
   getRequestUserEmail,
   getRequestOrgId,
 } from "@agent-native/core/server/request-context";
+import { assertAccess } from "@agent-native/core/sharing";
+import { eq } from "drizzle-orm";
+import { nanoid } from "nanoid";
+import { z } from "zod";
+
 import { getDb, schema } from "../server/db/index.js";
 import { createAssetFromBuffer } from "../server/lib/assets.js";
-import { compositeLogo } from "../server/lib/image-processing.js";
 import { applyPromptTemplate } from "../server/lib/generation-presets.js";
 import {
   compilePrompt,
@@ -22,8 +23,9 @@ import {
   isImageGenerationSetupError,
   selectReferences,
 } from "../server/lib/generation.js";
-import { getObject } from "../server/lib/storage.js";
+import { compositeLogo } from "../server/lib/image-processing.js";
 import { nowIso, parseJson, stringifyJson } from "../server/lib/json.js";
+import { getObject } from "../server/lib/storage.js";
 import {
   ASPECT_RATIOS,
   GENERATION_INTENTS,
@@ -41,6 +43,7 @@ import {
   requireGenerationSessionInLibrary,
   serializeAsset,
 } from "./_helpers.js";
+import { readImageModelDefault } from "./_image-model-default.js";
 import { upsertVariantSlot, wasVariantSlotDismissed } from "./variant-slots.js";
 
 function resolveModelForTier(
@@ -57,9 +60,14 @@ function resolveModelForTier(
 
 export default defineAction({
   description:
-    "Generate one brand-consistent image from a library. This is synchronous for images and returns the final asset with preview/download/embed URLs. Use generate-image-batch for multiple independent slots; do not poll image runs after this action returns.",
+    "Generate one brand-consistent image from a brand kit/library. This is synchronous for images and returns the final asset with preview/download/embed URLs. Use @brand-kit mentions as libraryId and @preset mentions as presetId when present. Use generate-image-batch for multiple independent slots; do not poll image runs after this action returns.",
   schema: z.object({
-    libraryId: z.string(),
+    libraryId: z
+      .string()
+      .optional()
+      .describe(
+        "Brand kit/library ID. Pass the refId from a brand-kit @mention, or choose a kit from view-screen/list-libraries.",
+      ),
     collectionId: z.string().optional(),
     presetId: z.string().optional(),
     sessionId: z.string().optional(),
@@ -80,6 +88,12 @@ export default defineAction({
     includeLogo: z.coerce.boolean().default(false),
     slotId: z.string().optional(),
     variantBatchId: z.string().optional(),
+    variantScopeId: z
+      .string()
+      .optional()
+      .describe(
+        "Internal UI state scope for live candidate slots. Usually omitted; embedded picker UIs pass a browser-tab scope.",
+      ),
     dismissible: z.coerce
       .boolean()
       .default(true)
@@ -111,7 +125,18 @@ export default defineAction({
       ),
   }),
   parallelSafe: true,
-  run: async (args) => {
+  run: async (input, context?: ActionRunContext) => {
+    const imageModelDefault = await readImageModelDefault();
+    const libraryId = input.libraryId;
+    if (!libraryId) {
+      throw new Error(
+        "No brand kit selected. Tag a brand kit with @ or pass libraryId.",
+      );
+    }
+    const args = {
+      ...input,
+      libraryId,
+    };
     await assertAccess("asset-library", args.libraryId, "editor");
     const db = getDb();
     const [library] = await db
@@ -224,6 +249,7 @@ export default defineAction({
       preset?.category ??
       collection?.category) as ImageCategory | undefined;
     const resolvedModel = (args.model ??
+      imageModelDefault ??
       resolveModelForTier(resolvedTier, category) ??
       preset?.model ??
       "gemini-3.1-flash-image") as (typeof IMAGE_MODELS)[number];
@@ -278,6 +304,8 @@ export default defineAction({
     });
     const runId = nanoid();
     const now = nowIso();
+    const slotId = args.slotId ?? runId;
+    const variantScopeId = args.variantScopeId ?? context?.threadId ?? null;
     // Capture identity at insert time so the org-admin audit log can filter
     // by owner / org without re-resolving who triggered the run later.
     const ownerEmail = getRequestUserEmail() ?? null;
@@ -317,11 +345,12 @@ export default defineAction({
       sessionId: session?.id ?? null,
       customInstructions: library.customInstructions ?? "",
     };
-    const slotId = args.slotId ?? runId;
     const dismissibleSlot = args.dismissible !== false && Boolean(slotId);
     const baseMetadata = {
       slotId,
       variantBatchId: args.variantBatchId ?? null,
+      threadId: context?.threadId ?? null,
+      variantScopeId,
       dismissible: dismissibleSlot,
       sourceAssetId: args.sourceAssetId,
       subjectAssetId: args.subjectAssetId,
@@ -364,6 +393,8 @@ export default defineAction({
       collectionId: resolvedCollectionId ?? null,
       presetId: preset?.id ?? null,
       sessionId: session?.id ?? null,
+      threadId: context?.threadId ?? null,
+      variantScopeId,
       prompt: args.prompt,
       slotId,
       status: "pending",
@@ -405,7 +436,10 @@ export default defineAction({
       }
       if (
         dismissibleSlot &&
-        (await wasVariantSlotDismissed(args.libraryId, slotId))
+        (await wasVariantSlotDismissed(args.libraryId, slotId, {
+          threadId: context?.threadId ?? null,
+          variantScopeId,
+        }))
       ) {
         await db
           .update(schema.assetGenerationRuns)
@@ -514,6 +548,8 @@ export default defineAction({
         collectionId: resolvedCollectionId ?? null,
         presetId: preset?.id ?? null,
         sessionId: session?.id ?? null,
+        threadId: context?.threadId ?? null,
+        variantScopeId,
         prompt: args.prompt,
         slotId,
         status: "ready",
@@ -545,7 +581,10 @@ export default defineAction({
         .where(eq(schema.assetGenerationRuns.id, runId));
       if (
         dismissibleSlot &&
-        (await wasVariantSlotDismissed(args.libraryId, slotId))
+        (await wasVariantSlotDismissed(args.libraryId, slotId, {
+          threadId: context?.threadId ?? null,
+          variantScopeId,
+        }))
       ) {
         throw err;
       }
@@ -556,6 +595,8 @@ export default defineAction({
         collectionId: resolvedCollectionId ?? null,
         presetId: preset?.id ?? null,
         sessionId: session?.id ?? null,
+        threadId: context?.threadId ?? null,
+        variantScopeId,
         prompt: args.prompt,
         slotId,
         status: "failed",

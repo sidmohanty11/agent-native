@@ -30,7 +30,7 @@ Some recordings are linked to a meeting — when `meeting_id` is non-null on the
 3. **Create row.** As soon as the stream is granted, call `create-recording` to insert the row with `status: "uploading"` and a pre-generated id. That id is used for every subsequent chunk upload.
 4. **Record.** Start a `MediaRecorder` with `mimeType: "video/webm;codecs=vp9,opus"` (fallback to vp8, then browser default). Use `timeslice: 2000` so chunks arrive every 2s.
 5. **Upload each chunk.** `ondataavailable` POSTs the chunk bytes to `/api/uploads/chunk` with headers `X-Recording-Id` and `X-Chunk-Index`. Don't retry inline — buffer failed chunks in `IndexedDB` and let a background worker re-send.
-6. **Live transcription.** Alongside the MediaRecorder, `useLiveTranscription` runs the Web Speech API to accumulate transcript text in real time. On stop, the client calls `save-browser-transcript` to persist the result immediately — no API key needed.
+6. **Live transcription.** Alongside the MediaRecorder, `useLiveTranscription` runs the Web Speech API to accumulate transcript text in real time. On stop, the client calls `save-browser-transcript` to persist the result immediately — no API key needed. Desktop recordings use local Whisper/macOS speech first when available, and fall back to Web Speech in the webview on non-mac before relying on upload transcription.
 7. **Finalize.** On stop, send the final chunk to `/api/uploads/:id/chunk?isFinal=1`. The route calls `finalize-recording`, which stitches chunks, uploads the finished media when storage is configured, transitions `status` to `ready`, then kicks off `request-transcript` for higher-quality output (see `ai-video-tools`).
 8. **Navigate.** Once the row is `ready` the UI navigates to `/r/:id`.
 
@@ -47,6 +47,23 @@ Loom imports are embed-backed, not Clips-owned video files. The player renders a
 Loom iframe and the native Clips editor is hidden for those recordings. If the
 user needs Clips-native trimming, exports, frame extraction, or upload-based
 transcription, ask them to upload the original video file instead.
+
+## Browser diagnostics and recorder install options
+
+Browser recordings can save bounded, redacted diagnostics through
+`createBrowserDiagnosticsCapture`: console messages plus fetch/XHR method, URL,
+status, duration, and errors. The browser recorder only captures activity from
+the recorder page itself. The Clips Chrome extension is the active-tab path for
+browser logs: it launches `/record` with an extension capture session and passes
+`developerLogs=1/0`, then saves diagnostics with source `extension`.
+
+The Web Store listing is live, so the public Chrome extension option shows by
+default. UI prompts that otherwise say "Download desktop app" use the shared
+install-choice component (`CaptureInstallButton` / `CaptureInstallInlineLink`)
+to offer two options: Chrome extension for browser logs, and desktop app for the
+most seamless native capture. Set `VITE_CLIPS_CHROME_EXTENSION_ENABLED=0` to hide
+the Chrome option again, or `VITE_CLIPS_CHROME_EXTENSION_URL` to point at a
+different listing.
 
 ## Pause / resume
 

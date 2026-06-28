@@ -1,9 +1,19 @@
 import type { ChatModelAdapter, ChatModelRunResult } from "@assistant-ui/react";
+
+import type {
+  AgentChatStructuredContentPart,
+  AgentChatStructuredMessage,
+} from "../agent/types.js";
+import type { ReasoningEffort } from "../shared/reasoning-effort.js";
 import {
   setActiveRun,
   updateActiveRunSeq,
   clearActiveRun,
 } from "./active-run-state.js";
+import { captureError } from "./analytics.js";
+import { agentNativePath } from "./api-path.js";
+import { unwrapAttachmentEnvelope } from "./composer/pasted-text.js";
+import { formatChatErrorText, normalizeChatError } from "./error-format.js";
 import {
   AgentAutoContinueSignal,
   type AgentActivityTrailEntry,
@@ -11,15 +21,6 @@ import {
   readSSEStream,
   settleInterruptedToolCalls,
 } from "./sse-event-processor.js";
-import { agentNativePath } from "./api-path.js";
-import { formatChatErrorText, normalizeChatError } from "./error-format.js";
-import { captureError } from "./analytics.js";
-import { unwrapAttachmentEnvelope } from "./composer/pasted-text.js";
-import type { ReasoningEffort } from "../shared/reasoning-effort.js";
-import type {
-  AgentChatStructuredContentPart,
-  AgentChatStructuredMessage,
-} from "../agent/types.js";
 import type { ChatThreadScope } from "./use-chat-threads.js";
 
 export type AgentChatSurfaceKind =
@@ -716,7 +717,7 @@ function continuationRepeatSignature(content: ContentPart[]): string {
     .map((segment) => segment.replace(/[^a-z0-9]+/g, " ").trim())
     .filter((segment) => segment.length > 0);
   if (segments.length === 0) return "";
-  return Array.from(new Set(segments)).sort().join(" ");
+  return Array.from(new Set(segments)).sort().join("\u0000");
 }
 
 /**
@@ -770,7 +771,7 @@ function inFlightToolInputSignature(
   part: Extract<ContentPart, { type: "tool-call" }>,
 ): string {
   const raw = part.argsText ?? stableJson(part.args);
-  return `${raw.length} ${raw.slice(0, 256)}`;
+  return `${raw.length}\u0000${raw.slice(0, 256)}`;
 }
 
 function toolContinuationKey(
@@ -832,6 +833,38 @@ function contentAfterContinuationPrefix(
   return [...delta, ...content.slice(contentIndex)];
 }
 
+// Concrete "ship a compact first version, then refine incrementally" guidance
+// keyed by the large-payload action the model was cut off while preparing. A run
+// cut off mid-stream while streaming one big tool input (extension HTML, a full
+// design file set, an entire dashboard config) re-streams the SAME oversized
+// payload on every continuation and never finishes inside the soft-timeout
+// window — the classic thrash loop. Pointing the resumed model at the
+// incremental-edit path for that specific action is what breaks the loop.
+// Returns undefined for tools with no known incremental counterpart so the
+// caller falls back to generic compact-first advice.
+function incrementalActionGuidance(tool: string): string | undefined {
+  switch (tool) {
+    case "create-extension":
+    case "update-extension":
+      return "create a compact working v1 with `create-extension`, then use focused `update-extension` edits for refinements";
+    case "generate-design":
+    case "update-design":
+      return "persist a minimal first version (fewer files) with `generate-design`, then refine individual files with `edit-design` search/replace instead of resending everything";
+    case "create-visual-plan":
+    case "create-ui-plan":
+    case "create-plan-design":
+    case "create-prototype-plan":
+      return "create the plan with its core sections or first screen, then expand it with `update-visual-plan`/`patch-visual-plan-source` follow-up edits";
+    case "update-visual-plan":
+    case "patch-visual-plan-source":
+      return "apply smaller, targeted `patch-visual-plan-source` edits rather than rewriting the whole plan in one call";
+    case "update-dashboard":
+      return "save a small dashboard first, then add panels one at a time with `update-dashboard` incremental `ops` edits instead of authoring the whole config in one call";
+    default:
+      return undefined;
+  }
+}
+
 function autoContinueMessage(signal: AgentAutoContinueSignal): string {
   const tool = lastActivityTool(signal.activityTrail);
   const reason =
@@ -845,15 +878,20 @@ function autoContinueMessage(signal: AgentAutoContinueSignal): string {
             ? "The previous stream ended before the agent sent a final completion signal."
             : "The previous run reached an internal execution budget.";
   // A run_timeout or a mid-stream cutoff while assembling one large action
-  // payload (e.g. inlining a big pasted HTML file into `create-extension`) is
-  // the classic trigger for the repetition/cutoff loop. Nudge the model toward
-  // a compact first version it can actually finish in a single run.
+  // payload (e.g. inlining a big pasted HTML file into `create-extension`, a
+  // full file set into `generate-design`, or a whole `update-dashboard` config)
+  // is the classic trigger for the repetition/cutoff loop. Nudge the model
+  // toward a compact first version it can actually finish in a single run, then
+  // incremental refinements — never re-streaming the same oversized payload.
   const cutoffPreparingAction =
     signal.reason === "run_timeout" || signal.reason === "stream_ended";
-  const actionInputNote =
-    cutoffPreparingAction && tool
-      ? `\n\nThe previous run was cut off while preparing the \`${tool}\` action input before the action could finish. Avoid spending another whole run assembling one large tool payload. If this is \`create-extension\`, create a compact working v1 first, then use focused \`update-extension\` edits for refinements.`
-      : "";
+  let actionInputNote = "";
+  if (cutoffPreparingAction && tool) {
+    const guidance = incrementalActionGuidance(tool);
+    actionInputNote = guidance
+      ? `\n\nThe previous run was cut off while preparing the \`${tool}\` action input before the action could finish. Avoid spending another whole run assembling one large tool payload — ${guidance}.`
+      : `\n\nThe previous run was cut off while preparing the \`${tool}\` action input before the action could finish. Avoid re-assembling one large tool payload: produce a compact first result you can finish in a single run, then refine it with smaller follow-up edits.`;
+  }
   return `${AUTO_CONTINUE_PROMPT}\n\n${AUTO_CONTINUE_COMPLETION_GUARD}\n\nInternal note: ${reason}${actionInputNote}`;
 }
 
@@ -924,6 +962,10 @@ function retryDelay(attempt: number, abortSignal: AbortSignal): Promise<void> {
   const jitter = base * 0.2;
   const ms = Math.max(0, base + (Math.random() * 2 - 1) * jitter);
   return delay(ms, abortSignal);
+}
+
+function shouldCaptureRecoveryHttpStatus(status: number): boolean {
+  return status < 500 || status >= 600;
 }
 
 function generateTurnId(): string {
@@ -1480,15 +1522,17 @@ export function createAgentChatAdapter(
                 lastReconnectError = new Error(
                   `Reconnect failed: ${reconnectRes.status}`,
                 );
-                captureChatClientError(
-                  lastReconnectError,
-                  "reconnect-current-response",
-                  {
-                    status: reconnectRes.status,
-                    hasBody: Boolean(reconnectRes.body),
-                    attempt,
-                  },
-                );
+                if (shouldCaptureRecoveryHttpStatus(reconnectRes.status)) {
+                  captureChatClientError(
+                    lastReconnectError,
+                    "reconnect-current-response",
+                    {
+                      status: reconnectRes.status,
+                      hasBody: Boolean(reconnectRes.body),
+                      attempt,
+                    },
+                  );
+                }
                 reconnectErrorCaptured = true;
                 break;
               }
@@ -1572,11 +1616,13 @@ export function createAgentChatAdapter(
                 lastActiveRunError = new Error(
                   `Active run lookup failed: ${activeRes.status}`,
                 );
-                captureChatClientError(
-                  lastActiveRunError,
-                  "reconnect-active-response",
-                  { status: activeRes.status, attempt },
-                );
+                if (shouldCaptureRecoveryHttpStatus(activeRes.status)) {
+                  captureChatClientError(
+                    lastActiveRunError,
+                    "reconnect-active-response",
+                    { status: activeRes.status, attempt },
+                  );
+                }
                 return false;
               }
               const active = await activeRes.json();

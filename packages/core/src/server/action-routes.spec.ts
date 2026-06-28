@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+
 import type { ActionEntry } from "../agent/production-agent.js";
 
 const mockNotifyActionChange = vi.hoisted(() => vi.fn());
@@ -62,6 +63,29 @@ describe("mountActionRoutes", () => {
 
     expect(result).toEqual({ error: "Forbidden" });
     expect(event._status).toBe(403);
+  });
+
+  it("serializes plain string action results as JSON strings", async () => {
+    const { mountActionRoutes } = await import("./action-routes.js");
+    const mounted: Array<{ path: string; handler: any }> = [];
+    const nitroApp = {
+      use: vi.fn((path: string, handler: any) =>
+        mounted.push({ path, handler }),
+      ),
+    };
+    const actions: Record<string, ActionEntry> = {
+      "archive-email": {
+        run: vi.fn(async () => "Archived 1 email(s) successfully"),
+      } as any,
+    };
+
+    mountActionRoutes(nitroApp, actions);
+
+    const event = { _method: "POST", req: { json: async () => ({}) } };
+    const result = await mounted[0].handler(event);
+
+    expect(event._responseHeaders["content-type"]).toBe("application/json");
+    expect(JSON.parse(result)).toBe("Archived 1 email(s) successfully");
   });
 
   it("isolates request context without mutating process.env", async () => {
@@ -196,7 +220,12 @@ describe("mountActionRoutes", () => {
     expect(result).toEqual({ ok: true, params: { q: "hello" } });
     expect(actions["list-things"].run).toHaveBeenCalledWith(
       { q: "hello" },
-      { userEmail: undefined, orgId: null, caller: "http" },
+      {
+        userEmail: undefined,
+        orgId: null,
+        caller: "http",
+        actionName: "list-things",
+      },
     );
     expect(mockNotifyActionChange).not.toHaveBeenCalled();
   });
@@ -234,6 +263,7 @@ describe("mountActionRoutes", () => {
       userEmail: "alice@example.com",
       orgId: "org-a",
       caller: "http",
+      actionName: "do-thing",
     });
     // No SSE sender on the HTTP surface.
     expect(received.send).toBeUndefined();
@@ -272,6 +302,7 @@ describe("mountActionRoutes", () => {
       userEmail: "alice@example.com",
       orgId: null,
       caller: "frontend",
+      actionName: "do-thing",
     });
   });
 
@@ -344,6 +375,61 @@ describe("mountActionRoutes", () => {
         libraryIds: ["lib-1"],
         tag: ["hero", "logo"],
         search: "logos",
+      },
+    });
+  });
+
+  it("coerces boolean and number GET params to their schema types (useActionQuery round-trip)", async () => {
+    // `useActionQuery` serializes every param into the query string, so a
+    // boolean `true` arrives at the server as the string "true" and a number
+    // as "5" (URLSearchParams stringifies everything). A schema-validated GET
+    // action expects real boolean/number, so without coercion Zod rejects them
+    // with "expected boolean, received string". This exercises the full route
+    // path (parse query → validating run) to prove the values round-trip to
+    // native types. Regression guard for the `instrument-overview` report.
+    const { mountActionRoutes } = await import("./action-routes.js");
+    const { defineAction } = await import("../action.js");
+    const { z } = await import("zod");
+
+    const mounted: Array<{ path: string; handler: any }> = [];
+    const nitroApp = {
+      use: vi.fn((path: string, handler: any) =>
+        mounted.push({ path, handler }),
+      ),
+    };
+
+    const overview = defineAction({
+      description: "instrument overview",
+      http: { method: "GET" },
+      schema: z.object({
+        portfolioId: z.string(),
+        isin: z.string(),
+        baseCurrency: z.string().optional(),
+        includeSeries: z.boolean().optional(),
+        limit: z.number().optional(),
+      }),
+      run: async (params: any) => ({ params }),
+    });
+
+    const actions: Record<string, ActionEntry> = {
+      "instrument-overview": overview as unknown as ActionEntry,
+    };
+
+    mountActionRoutes(nitroApp, actions);
+
+    const result = await mounted[0].handler({
+      _method: "GET",
+      req: {
+        url: "http://app.test/_agent-native/actions/instrument-overview?portfolioId=p1&isin=US67066G1040&includeSeries=true&limit=5",
+      },
+    });
+
+    expect(result).toEqual({
+      params: {
+        portfolioId: "p1",
+        isin: "US67066G1040",
+        includeSeries: true,
+        limit: 5,
       },
     });
   });

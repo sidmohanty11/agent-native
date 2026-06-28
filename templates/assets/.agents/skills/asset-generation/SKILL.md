@@ -16,12 +16,24 @@ or generated image/video assets that another app can reference by ID and URL.
 
 ## Choose The Path
 
-- Use `open-asset-picker` when a person should browse, search, generate, and
-  select an asset in UI. Pass `mediaType: "image"` by default, or
-  `mediaType: "video"` for video libraries.
+- Use `generate-asset` when a person should get newly generated, on-brand image
+  candidates and choose the winner in the inline picker. It matches a library
+  when `libraryId` is omitted, generates candidates, returns the picker filtered
+  to those run IDs, and works in in-app chat plus external MCP hosts.
+- Use `open-asset-picker` when a person should browse, search, or select an
+  existing asset inside an embedded picker, or when you want the picker to
+  handle generation itself. It still opens `/library` with the iframe/bridge
+  contract. The normal human Library workspace is `/library` and `/library/:id`.
+  Pass `mediaType: "image"` by default, or `mediaType: "video"` for video
+  libraries.
 - Use unattended actions when the agent already knows what to do:
   `search-assets`, `list-assets`, `generate-image`, `generate-image-batch`,
   `generate-video`, `refresh-generation-run`, and `export-asset`.
+- In chat, consume composer `@` references as structured generation inputs:
+  `brand-kit` maps to `libraryId`, `preset` maps to `presetId`, and
+  `media-type` chooses image generation versus video generation. If no mention
+  is available, use `view-screen`, `list-libraries`, and
+  `list-generation-presets` to choose explicit args.
 - Use generation presets when the user asks for a repeatable output format
   like social image, blog hero, or diagram. Call `list-generation-presets` for
   the library and pass `presetId` through generation/refinement actions.
@@ -41,7 +53,9 @@ or generated image/video assets that another app can reference by ID and URL.
 
 ## Image Workflows
 
-1. Pick or match the library with `list-libraries` or `match-library`.
+1. For human-in-the-loop generation, call `generate-asset` first and preserve
+   the returned picker/candidate metadata. For unattended generation, pick or
+   match the library with `list-libraries` or `match-library`.
    If the user wants a default look rather than a brand library, call
    `list-library-presets` and then `create-library-from-preset`; the resulting
    library is editable and reusable like any other library.
@@ -51,7 +65,8 @@ or generated image/video assets that another app can reference by ID and URL.
    `generate-image-batch` returns, use its returned `images` / asset fields
    directly; do not call `get-generation-run`, `refresh-generation-run`, or
    regenerate just to verify image runs.
-4. For preset-backed work, pass `presetId`; for handoff work, pass `sessionId`.
+4. For preset-backed work, pass a mentioned or selected `presetId`; for handoff
+   work, pass `sessionId`.
 5. Let the server choose a small deterministic reference set unless the user
    named exact assets. Canonical style anchors come from
    `assetLibraries.settings.canonicalStyleAssetIds` and
@@ -85,8 +100,10 @@ deferred.
   Do not put shared secrets in skill files.
 - Local customization: run `npx @agent-native/core@latest app-skill launch --local` from the
   Assets app-skill manifest, or pass `--into <path>` for editable source.
-- For A2A or MCP callers, include exact `assetId`, `runId`, media type, and
-  URLs in the final response so the caller can attach or embed the media.
+- For MCP callers, `generate-asset` is the portable first choice because the
+  same MCP App picker renders inline in Agent-Native chat, ChatGPT, and Claude
+  when the host supports MCP Apps. Include exact `assetId`, `runId`, media type,
+  and URLs in the final response so the caller can attach or embed the media.
   Include `presetId` and `sessionId` when present.
 
 ## Don't

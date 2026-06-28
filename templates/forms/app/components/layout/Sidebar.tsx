@@ -1,25 +1,3 @@
-import { useState, useRef, useEffect, type MouseEvent } from "react";
-import { Link, useLocation, useNavigate } from "react-router";
-import {
-  IconUsers,
-  IconArrowUp,
-  IconPlus,
-  IconMenu2,
-  IconX,
-  IconMessageCircle,
-} from "@tabler/icons-react";
-import { OrgSwitcher } from "@agent-native/core/client/org";
-import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Skeleton } from "@/components/ui/skeleton";
-import { ThemeToggle } from "@/components/ThemeToggle";
-import {
-  Popover,
-  PopoverTrigger,
-  PopoverContent,
-} from "@/components/ui/popover";
-import { useForms, useCreateForm } from "@/hooks/use-forms";
-import { useAgentPromptRun } from "@/hooks/use-agent-prompt-run";
 import {
   useSendToAgentChat,
   DevDatabaseLink,
@@ -27,8 +5,30 @@ import {
   appPath,
   focusAgentChat,
   navigateWithAgentChatViewTransition,
+  useT,
 } from "@agent-native/core/client";
 import { ExtensionsSidebarSection } from "@agent-native/core/client/extensions";
+import { OrgSwitcher } from "@agent-native/core/client/org";
+import {
+  IconArrowUp,
+  IconPlus,
+  IconMenu2,
+  IconX,
+  IconMessageCircle,
+  IconSettings,
+  IconForms,
+} from "@tabler/icons-react";
+import { useState, useRef, useEffect, type MouseEvent } from "react";
+import { Link, useLocation, useNavigate } from "react-router";
+
+import { ThemeToggle } from "@/components/ThemeToggle";
+import { Button } from "@/components/ui/button";
+import {
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
+} from "@/components/ui/popover";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Tooltip,
@@ -36,25 +36,19 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useAgentPromptRun } from "@/hooks/use-agent-prompt-run";
+import { useCreateForm } from "@/hooks/use-forms";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
-
-const statusDots: Record<string, string> = {
-  draft: "bg-amber-500",
-  published: "bg-emerald-500",
-  closed: "bg-muted-foreground/50",
-};
 
 export function Sidebar() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { data: formsData, isLoading: formsLoading } = useForms();
-  const forms = Array.isArray(formsData) ? formsData : [];
+  const t = useT();
   const createForm = useCreateForm();
   const { send } = useSendToAgentChat();
   const promptRun = useAgentPromptRun({
-    staleMessage:
-      "Form generation is taking longer than expected. You can try again.",
+    staleMessage: t("sidebar.formGenerationStale"),
   });
   const [popoverOpen, setPopoverOpen] = useState(false);
   const [prompt, setPrompt] = useState("");
@@ -74,7 +68,7 @@ export function Sidebar() {
     const tempId = crypto.randomUUID().replace(/-/g, "").slice(0, 10);
     navigate(`/forms/${tempId}`);
     createForm.mutate(
-      { title: "Untitled Form" },
+      { title: t("sidebar.untitledForm") },
       { onSuccess: (form) => navigate(`/forms/${form.id}`, { replace: true }) },
     );
   }
@@ -92,23 +86,32 @@ export function Sidebar() {
   }
 
   function navigateHomeChat(event: MouseEvent<HTMLAnchorElement>) {
+    if (
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey ||
+      event.button !== 0
+    ) {
+      return;
+    }
     event.preventDefault();
     if (isMobile) setMobileOpen(false);
     focusAgentChat();
-    navigateWithAgentChatViewTransition(navigate, "/");
+    navigateWithAgentChatViewTransition(navigate, "/ask");
   }
 
   function toggleLogoView() {
     if (isMobile) setMobileOpen(false);
     focusAgentChat();
-    navigateWithAgentChatViewTransition(navigate, "/");
+    navigateWithAgentChatViewTransition(navigate, "/ask");
   }
 
   const newFormButton = (
     <PopoverTrigger asChild>
-      <button className="cursor-pointer flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground min-h-[44px]">
-        <IconPlus size={14} className="shrink-0" />
-        <span>New form</span>
+      <button className="flex min-h-[44px] w-full cursor-pointer items-center gap-2.5 rounded-md px-3 py-2 text-sm text-muted-foreground transition-all hover:bg-accent/50 hover:text-foreground">
+        <IconPlus className="h-4 w-4 shrink-0" />
+        <span>{t("sidebar.newForm")}</span>
       </button>
     </PopoverTrigger>
   );
@@ -121,7 +124,7 @@ export function Sidebar() {
       className="w-80 p-0 rounded-xl"
     >
       <div className="p-4 pb-3">
-        <p className="text-sm font-semibold">New form</p>
+        <p className="text-sm font-semibold">{t("sidebar.newForm")}</p>
         <Textarea
           ref={textareaRef}
           value={prompt}
@@ -132,7 +135,7 @@ export function Sidebar() {
               handleSubmitPrompt();
             }
           }}
-          placeholder="Describe your form..."
+          placeholder={t("sidebar.describeFormPlaceholder")}
           className="mt-2 w-full resize-none bg-transparent text-sm placeholder:text-muted-foreground/50 border-none shadow-none"
           rows={4}
         />
@@ -146,11 +149,11 @@ export function Sidebar() {
             className="h-auto p-0 text-xs text-muted-foreground"
             onClick={handleSkip}
           >
-            Skip prompt
+            {t("sidebar.skipPrompt")}
           </Button>
           <span className="text-[11px] text-muted-foreground/70">
             {/Mac|iPhone|iPad/.test(navigator.userAgent) ? "⌘" : "Ctrl"}
-            +Enter to submit
+            {t("sidebar.submitShortcutSuffix")}
           </span>
           <Button
             variant="secondary"
@@ -158,7 +161,7 @@ export function Sidebar() {
             className="h-7 w-7"
             onClick={handleSubmitPrompt}
             disabled={!prompt.trim() || promptRun.isActivePrompt(prompt)}
-            aria-label="Send prompt"
+            aria-label={t("sidebar.sendPrompt")}
           >
             <IconArrowUp size={14} />
           </Button>
@@ -170,7 +173,7 @@ export function Sidebar() {
   const sidebarContent = (
     <div
       className={cn(
-        "flex h-screen w-60 min-w-0 shrink-0 flex-col overflow-hidden border-r border-border bg-muted/30",
+        "agent-layout-left-drawer flex h-screen w-60 min-w-0 shrink-0 flex-col overflow-hidden border-e border-border bg-muted/30",
         isMobile && "w-full",
       )}
     >
@@ -181,7 +184,7 @@ export function Sidebar() {
             <TooltipTrigger asChild>
               <button
                 type="button"
-                aria-label="Open Ask Forms full screen"
+                aria-label={t("sidebar.openAskFullScreen")}
                 className="flex min-w-0 items-center gap-2 rounded-md text-base font-semibold tracking-tight text-foreground transition-colors hover:text-foreground/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={toggleLogoView}
               >
@@ -197,11 +200,11 @@ export function Sidebar() {
                   aria-hidden="true"
                   className="hidden h-4 w-auto shrink-0 dark:block"
                 />
-                <span className="truncate">Forms</span>
+                <span className="truncate">{t("navigation.brand")}</span>
               </button>
             </TooltipTrigger>
             <TooltipContent side="right">
-              Open Ask Forms full screen
+              {t("sidebar.openAskFullScreen")}
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
@@ -220,67 +223,41 @@ export function Sidebar() {
       <ScrollArea className="min-h-0 min-w-0 flex-1">
         <div
           className={cn(
-            "min-w-0 max-w-full overflow-hidden py-2",
+            "grid min-w-0 max-w-full gap-1 overflow-hidden p-2",
             isMobile ? "w-full" : "w-60",
           )}
         >
           <Link
-            to="/"
+            to="/ask"
             onClick={navigateHomeChat}
             className={cn(
-              "flex w-full min-w-0 max-w-full items-center gap-2.5 overflow-hidden rounded-md px-3 py-2 text-sm min-h-[44px]",
-              location.pathname === "/"
+              "flex min-h-[44px] w-full min-w-0 max-w-full items-center gap-2.5 overflow-hidden rounded-md px-3 py-2 text-sm transition-all hover:text-primary",
+              location.pathname === "/ask" || location.pathname === "/"
                 ? "bg-accent text-accent-foreground"
                 : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
             )}
           >
-            <IconMessageCircle size={14} className="shrink-0" />
-            <span className="min-w-0 flex-1 basis-0 truncate">Ask Forms</span>
+            <IconMessageCircle className="h-4 w-4 shrink-0" />
+            <span className="min-w-0 flex-1 basis-0 truncate">
+              {t("navigation.askForms")}
+            </span>
           </Link>
 
-          {formsLoading && forms.length === 0
-            ? Array.from({ length: 5 }).map((_, i) => (
-                <div
-                  key={i}
-                  className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 min-h-[44px]"
-                >
-                  <Skeleton className="h-1.5 w-1.5 shrink-0 rounded-full" />
-                  <Skeleton
-                    className="h-3.5"
-                    style={{ width: `${50 + ((i * 17) % 40)}%` }}
-                  />
-                </div>
-              ))
-            : null}
-          {forms.map((form) => {
-            const isActive =
-              location.pathname === `/forms/${form.id}` ||
-              location.pathname === `/forms/${form.id}/responses`;
-            return (
-              <Link
-                key={form.id}
-                to={`/forms/${form.id}`}
-                onClick={() => isMobile && setMobileOpen(false)}
-                className={cn(
-                  "flex w-full min-w-0 max-w-full items-center gap-2.5 overflow-hidden rounded-md px-3 py-2 text-sm min-h-[44px]",
-                  isActive
-                    ? "bg-accent text-accent-foreground"
-                    : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-                )}
-                title={form.title || "Untitled Form"}
-              >
-                <span
-                  className={cn(
-                    "h-1.5 w-1.5 shrink-0 rounded-full",
-                    isActive ? "bg-accent-foreground" : statusDots[form.status],
-                  )}
-                />
-                <span className="min-w-0 flex-1 basis-0 truncate">
-                  {form.title || "Untitled Form"}
-                </span>
-              </Link>
-            );
-          })}
+          <Link
+            to="/forms"
+            onClick={() => isMobile && setMobileOpen(false)}
+            className={cn(
+              "flex min-h-[44px] w-full min-w-0 max-w-full items-center gap-2.5 overflow-hidden rounded-md px-3 py-2 text-sm transition-all hover:text-primary",
+              location.pathname.startsWith("/forms")
+                ? "bg-accent text-accent-foreground"
+                : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+            )}
+          >
+            <IconForms className="h-4 w-4 shrink-0" />
+            <span className="min-w-0 flex-1 basis-0 truncate">
+              {t("navigation.allForms")}
+            </span>
+          </Link>
 
           <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
             {newFormButton}
@@ -292,17 +269,17 @@ export function Sidebar() {
       {/* Pinned nav + footer */}
       <div className="shrink-0 border-t border-border px-3 py-1.5">
         <Link
-          to="/team"
+          to="/settings"
           onClick={() => isMobile && setMobileOpen(false)}
           className={cn(
             "flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm min-h-[44px]",
-            location.pathname === "/team"
+            location.pathname === "/settings"
               ? "bg-accent text-accent-foreground"
               : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
           )}
         >
-          <IconUsers size={14} className="shrink-0" />
-          <span>Team</span>
+          <IconSettings size={14} className="shrink-0" />
+          <span>{t("navigation.settings")}</span>
         </Link>
       </div>
 
@@ -329,9 +306,9 @@ export function Sidebar() {
         <Button
           variant="ghost"
           size="icon"
-          className="fixed top-2 left-2 z-40 h-10 w-10 md:hidden"
+          className="fixed top-2 start-2 z-40 h-10 w-10 md:hidden"
           onClick={() => setMobileOpen(true)}
-          aria-label="Open sidebar"
+          aria-label={t("sidebar.openSidebar")}
         >
           <IconMenu2 size={20} />
         </Button>
@@ -341,7 +318,7 @@ export function Sidebar() {
               className="fixed inset-0 z-40 bg-black/40"
               onClick={() => setMobileOpen(false)}
             />
-            <div className="fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw]">
+            <div className="fixed inset-y-0 start-0 z-50 w-72 max-w-[85vw]">
               {sidebarContent}
             </div>
           </>

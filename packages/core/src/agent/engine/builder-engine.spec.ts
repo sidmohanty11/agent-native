@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+import * as captureErrorModule from "../../server/capture-error.js";
 import {
   BUILDER_CAPABILITIES,
   BUILDER_DEFAULT_MODEL,
   createBuilderEngine,
 } from "./builder-engine.js";
 import { DEFAULT_BUILDER_MAX_OUTPUT_TOKENS } from "./output-tokens.js";
-import * as captureErrorModule from "../../server/capture-error.js";
 import type { EngineStreamOptions } from "./types.js";
 
 const credentialState = vi.hoisted(() => ({
@@ -15,6 +16,9 @@ const credentialState = vi.hoisted(() => ({
   builderOrgName: null as string | null,
   recordBuilderCredentialAuthFailure: vi.fn(async () => {}),
 }));
+
+const AGENT_NATIVE_UPGRADE_URL =
+  "https://builder.io/account/subscription?signupSource=agent-native&agentNativeConnectSource=gateway_quota_upgrade&agentNativeFlow=connect_llm&framework=agent-native";
 
 // Mock the credential provider so tests do not hit the DB (app_secrets table).
 vi.mock("../../server/credential-provider.js", async (importOriginal) => {
@@ -374,6 +378,34 @@ describe("createBuilderEngine", () => {
     expect(events.find((e) => e.type === "tool-call")).toBeDefined();
   });
 
+  it("maps gateway heartbeat frames to gateway-heartbeat engine events", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonlResponse([
+          {
+            type: "heartbeat",
+            requestId: "req_1",
+            timestamp: 1_700_000_000_000,
+          },
+          { type: "text-delta", text: "Hi" },
+          { type: "usage", inputTokens: 10, outputTokens: 2 },
+          { type: "stop", reason: "end_turn", requestId: "req_1" },
+        ]),
+      ),
+    );
+
+    const engine = createBuilderEngine();
+    const events = await collectEvents(engine.stream(BASE_OPTS));
+
+    expect(events.filter((e) => e.type === "gateway-heartbeat")).toEqual([
+      { type: "gateway-heartbeat" },
+    ]);
+    expect(events.some((e) => e.type === "text-delta" && e.text === "Hi")).toBe(
+      true,
+    );
+  });
+
   it("maps 402 credits-limit-monthly to stop-error with errorCode + upgradeUrl", async () => {
     vi.stubGlobal(
       "fetch",
@@ -401,7 +433,7 @@ describe("createBuilderEngine", () => {
     expect(stop?.error).toContain("monthly AI credits");
   });
 
-  it("routes upgradeUrl to the org-agnostic billing page (BUILDER_ORG_NAME is a display name, not a URL slug)", async () => {
+  it("routes upgradeUrl to the org-agnostic subscription page with Agent Native attribution", async () => {
     credentialState.builderOrgName = "Acme Corp";
     vi.stubEnv("BUILDER_ORG_NAME", "Acme Corp");
     vi.stubGlobal(
@@ -418,7 +450,7 @@ describe("createBuilderEngine", () => {
     const events = await collectEvents(engine.stream(BASE_OPTS));
 
     const stop = events.find((e) => e.type === "stop");
-    expect(stop?.upgradeUrl).toBe("https://builder.io/account/billing");
+    expect(stop?.upgradeUrl).toBe(AGENT_NATIVE_UPGRADE_URL);
   });
 
   it("maps 401 unauthorized to Builder auth stop-error", async () => {
@@ -573,7 +605,7 @@ describe("createBuilderEngine", () => {
 
     const stop = events.find((e) => e.type === "stop");
     expect(stop?.reason).toBe("error");
-    expect(stop?.upgradeUrl).toBe("https://builder.io/account/billing");
+    expect(stop?.upgradeUrl).toBe(AGENT_NATIVE_UPGRADE_URL);
   });
 
   it("maps 429 concurrency to a retryable error message", async () => {
@@ -685,6 +717,42 @@ describe("createBuilderEngine", () => {
     expect(stop?.reason).toBe("error");
     expect(stop?.errorCode).toBe("builder_gateway_timeout");
     expect(stop?.error).toContain("Builder gateway timed out");
+  });
+
+  it("uses the localhost gateway timeout cap when AGENT_NATIVE_BUILDER_GATEWAY_TIMEOUT_MS is unset", async () => {
+    vi.stubEnv(
+      "BUILDER_GATEWAY_BASE_URL",
+      "http://localhost:8080/agent-native/gateway/v1",
+    );
+    vi.useFakeTimers();
+    const fetchSpy = vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            reject(init.signal?.reason ?? new Error("aborted"));
+          });
+        }),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const engine = createBuilderEngine();
+    const eventsPromise = collectEvents(engine.stream(BASE_OPTS));
+    await vi.advanceTimersByTimeAsync(45_000);
+
+    let settledEarly = false;
+    void eventsPromise.then(() => {
+      settledEarly = true;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settledEarly).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(135_000);
+    const events = await eventsPromise;
+
+    const stop = events.find((e) => e.type === "stop");
+    expect(stop?.reason).toBe("error");
+    expect(stop?.errorCode).toBe("builder_gateway_timeout");
+    expect(stop?.error).toContain("180s");
   });
 
   it("caps configured gateway timeouts with room before the 60s serverless function limit", async () => {

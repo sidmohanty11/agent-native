@@ -1,16 +1,22 @@
+import { getDbExec } from "@agent-native/core/db";
+import {
+  saveOAuthTokens,
+  deleteOAuthTokens,
+  listOAuthAccountsByOwner,
+} from "@agent-native/core/oauth-tokens";
+import {
+  isOAuthConnected,
+  getOAuthAccounts,
+  resolveSecret,
+  runWithRequestContext,
+} from "@agent-native/core/server";
+
 import type {
   CalendarEvent,
   GoogleAuthStatus,
   UpdateEventScope,
 } from "../../shared/api.js";
 import { getGoogleEventColorHex } from "../../shared/google-event-colors.js";
-import {
-  saveOAuthTokens,
-  deleteOAuthTokens,
-  listOAuthAccountsByOwner,
-} from "@agent-native/core/oauth-tokens";
-import { isOAuthConnected, getOAuthAccounts } from "@agent-native/core/server";
-import { getDbExec } from "@agent-native/core/db";
 import {
   createOAuth2Client,
   oauth2GetUserInfo,
@@ -46,19 +52,68 @@ interface GoogleTokens {
   photoUrl?: string;
 }
 
+interface GoogleOAuthCredentials {
+  clientId: string;
+  clientSecret: string;
+}
+
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function getOAuth2Credentials() {
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  if (!clientId || !clientSecret) {
+async function getOAuth2Credentials(owner?: string) {
+  const credentials = (
+    await resolveGoogleProviderCredentialCandidates(owner)
+  )[0];
+  if (!credentials) {
     throw new Error(
-      "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set in environment",
+      "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be saved in settings",
     );
   }
+  return credentials;
+}
+
+async function getOAuth2RefreshCredentials(owner?: string) {
+  const candidates = await resolveGoogleProviderCredentialCandidates(owner);
+  if (!candidates.length) {
+    throw new Error(
+      "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be saved in settings",
+    );
+  }
+  return candidates;
+}
+
+async function readCredentialPair(
+  clientIdKey: string,
+  clientSecretKey: string,
+): Promise<GoogleOAuthCredentials | null> {
+  const [clientId, clientSecret] = await Promise.all([
+    resolveSecret(clientIdKey),
+    resolveSecret(clientSecretKey),
+  ]);
+  if (!clientId || !clientSecret) return null;
   return { clientId, clientSecret };
+}
+
+async function resolveGoogleProviderCredentialCandidates(
+  owner?: string,
+): Promise<GoogleOAuthCredentials[]> {
+  const resolve = async () => {
+    const primary = await readCredentialPair(
+      "GOOGLE_CLIENT_ID",
+      "GOOGLE_CLIENT_SECRET",
+    );
+    const legacy = await readCredentialPair(
+      "GOOGLE_LEGACY_CLIENT_ID",
+      "GOOGLE_LEGACY_CLIENT_SECRET",
+    );
+    if (!primary) return legacy ? [legacy] : [];
+    if (!legacy || legacy.clientId === primary.clientId) return [primary];
+    return [primary, legacy];
+  };
+  return owner
+    ? runWithRequestContext({ userEmail: owner }, resolve)
+    : await resolve();
 }
 
 /**
@@ -142,6 +197,28 @@ function mapColor(event: any): Pick<CalendarEvent, "color" | "colorId"> {
     colorId: event.colorId || undefined,
     color: getGoogleEventColorHex(event.colorId),
   };
+}
+
+function mapAttendees(event: any): CalendarEvent["attendees"] {
+  return event.attendees?.map((attendee: any) => ({
+    email: attendee.email,
+    displayName: attendee.displayName || undefined,
+    photoUrl: attendee.photoUrl || undefined,
+    comment: attendee.comment || undefined,
+    responseStatus: attendee.responseStatus || undefined,
+    organizer: attendee.organizer || undefined,
+    self: attendee.self || undefined,
+  }));
+}
+
+function mapOrganizer(event: any): CalendarEvent["organizer"] {
+  return event.organizer
+    ? {
+        email: event.organizer.email,
+        displayName: event.organizer.displayName || undefined,
+        self: event.organizer.self || undefined,
+      }
+    : undefined;
 }
 
 function buildDateRange(event: CalendarEvent | Partial<CalendarEvent>) {
@@ -294,17 +371,30 @@ async function getValidAccessToken(
       );
     }
     try {
-      const { clientId, clientSecret } = getOAuth2Credentials();
-      const oauth2 = createOAuth2Client(clientId, clientSecret, "");
-      const newTokens = await oauth2.refreshToken(tokens.refresh_token);
-      const merged = { ...tokens, ...newTokens };
-      await saveOAuthTokens(
-        "google",
-        accountId,
-        merged as unknown as Record<string, unknown>,
-        owner ?? accountId,
-      );
-      return merged.access_token;
+      let lastRefreshError: any;
+      for (const {
+        clientId,
+        clientSecret,
+      } of await getOAuth2RefreshCredentials(owner)) {
+        try {
+          const oauth2 = createOAuth2Client(clientId, clientSecret, "");
+          const newTokens = await oauth2.refreshToken(tokens.refresh_token);
+          const merged = { ...tokens, ...newTokens };
+          await saveOAuthTokens(
+            "google",
+            accountId,
+            merged as unknown as Record<string, unknown>,
+            owner ?? accountId,
+          );
+          return merged.access_token;
+        } catch (err: any) {
+          lastRefreshError = err;
+          if (!isPermanentRefreshError(err?.message || "")) {
+            throw err;
+          }
+        }
+      }
+      throw lastRefreshError;
     } catch (err: any) {
       if (isPermanentRefreshError(err?.message || "")) {
         // Drop the dead row so isOAuthConnected returns false and the UI
@@ -325,12 +415,13 @@ async function getValidAccessToken(
   return tokens.access_token;
 }
 
-export function getAuthUrl(
+export async function getAuthUrl(
   origin?: string,
   redirectUri?: string,
   state?: string,
-): string {
-  const { clientId, clientSecret } = getOAuth2Credentials();
+  owner?: string,
+): Promise<string> {
+  const { clientId, clientSecret } = await getOAuth2Credentials(owner);
   const uri =
     redirectUri ||
     (origin ? `${origin}/_agent-native/google/callback` : undefined);
@@ -349,7 +440,7 @@ export async function exchangeCode(
   redirectUri?: string,
   owner?: string,
 ): Promise<string> {
-  const { clientId, clientSecret } = getOAuth2Credentials();
+  const { clientId, clientSecret } = await getOAuth2Credentials(owner);
   const uri =
     redirectUri ||
     (origin ? `${origin}/_agent-native/google/callback` : undefined);
@@ -642,15 +733,7 @@ export async function listEvents(
             transparency: event.transparency || undefined,
             ...mapColor(event),
             eventType: event.eventType || "default",
-            attendees: event.attendees?.map((a: any) => ({
-              email: a.email,
-              displayName: a.displayName || undefined,
-              photoUrl: a.photoUrl || undefined,
-              comment: a.comment || undefined,
-              responseStatus: a.responseStatus || undefined,
-              organizer: a.organizer || undefined,
-              self: a.self || undefined,
-            })),
+            attendees: mapAttendees(event),
             ...mapReminders(event),
             recurrence: event.recurrence || undefined,
             recurringEventId: event.recurringEventId || undefined,
@@ -683,13 +766,7 @@ export async function listEvents(
             focusTimeProperties: event.focusTimeProperties || undefined,
             workingLocationProperties:
               event.workingLocationProperties || undefined,
-            organizer: event.organizer
-              ? {
-                  email: event.organizer.email,
-                  displayName: event.organizer.displayName || undefined,
-                  self: event.organizer.self || undefined,
-                }
-              : undefined,
+            organizer: mapOrganizer(event),
             createdAt: event.created || new Date().toISOString(),
             updatedAt: event.updated || new Date().toISOString(),
           };
@@ -852,6 +929,9 @@ export async function listOverlayEvents(
           eventType: event.eventType || "default",
           accountEmail: undefined,
           overlayEmail,
+          ...mapColor(event),
+          attendees: mapAttendees(event),
+          organizer: mapOrganizer(event),
           createdAt: event.created || new Date().toISOString(),
           updatedAt: event.updated || new Date().toISOString(),
         }));
@@ -905,15 +985,7 @@ export async function getEvent(
     transparency: event.transparency || undefined,
     ...mapColor(event),
     eventType: event.eventType || "default",
-    attendees: event.attendees?.map((a: any) => ({
-      email: a.email,
-      displayName: a.displayName || undefined,
-      photoUrl: a.photoUrl || undefined,
-      comment: a.comment || undefined,
-      responseStatus: a.responseStatus || undefined,
-      organizer: a.organizer || undefined,
-      self: a.self || undefined,
-    })),
+    attendees: mapAttendees(event),
     ...mapReminders(event),
     recurrence: event.recurrence || undefined,
     recurringEventId: event.recurringEventId || undefined,
@@ -925,13 +997,7 @@ export async function getEvent(
     outOfOfficeProperties: event.outOfOfficeProperties || undefined,
     focusTimeProperties: event.focusTimeProperties || undefined,
     workingLocationProperties: event.workingLocationProperties || undefined,
-    organizer: event.organizer
-      ? {
-          email: event.organizer.email,
-          displayName: event.organizer.displayName || undefined,
-          self: event.organizer.self || undefined,
-        }
-      : undefined,
+    organizer: mapOrganizer(event),
     createdAt: event.created || new Date().toISOString(),
     updatedAt: event.updated || new Date().toISOString(),
   };

@@ -1,4 +1,5 @@
-import { A2AClient, callAgent, type Message, type Task } from "../a2a/index.js";
+import { A2AClient, callAgent } from "../a2a/client.js";
+import type { Message, Task } from "../a2a/types.js";
 
 export interface AgentEndpointOptions {
   /**

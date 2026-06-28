@@ -1,6 +1,3 @@
-import { useEffect } from "react";
-import { useLocation, useNavigate } from "react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   agentNativePath,
   appBasePath,
@@ -8,6 +5,10 @@ import {
   markAgentChatHomeHandoff,
 } from "@agent-native/core/client";
 import { extensionIdFromPathname } from "@agent-native/core/client/extensions";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { useLocation, useNavigate } from "react-router";
+
 import type {
   DispatchExtensionConfig,
   DispatchNavItem,
@@ -21,6 +22,7 @@ export interface NavigationState {
   dreamId?: string;
   sourceId?: string;
   query?: string;
+  threadId?: string;
 }
 
 export function useNavigationState(extensions?: DispatchExtensionConfig) {
@@ -82,8 +84,8 @@ export function useNavigationState(extensions?: DispatchExtensionConfig) {
         : resolvedPath;
     const nextPath = routerPath(path);
     if (
-      routerPath(location.pathname) === "/chat" &&
-      pathnameFromPath(nextPath) !== "/chat"
+      isChatPath(routerPath(location.pathname)) &&
+      !isChatPath(pathnameFromPath(nextPath))
     ) {
       markAgentChatHomeHandoff("dispatch");
     }
@@ -96,6 +98,21 @@ function pathnameFromPath(path: string): string {
   return path.split(/[?#]/, 1)[0] || "/";
 }
 
+function isChatPath(pathname: string): boolean {
+  return pathname === "/chat" || pathname.startsWith("/chat/");
+}
+
+function threadIdFromPath(pathname: string): string | null {
+  const match = pathname.match(/^\/chat\/([^/]+)/);
+  if (!match) return null;
+  try {
+    const value = decodeURIComponent(match[1]).trim();
+    return value || null;
+  } catch {
+    return null;
+  }
+}
+
 export function buildDispatchNavigationState(
   pathname: string,
   search = "",
@@ -105,6 +122,9 @@ export function buildDispatchNavigationState(
     view: resolveView(pathname, extensions),
     path: appPath(pathname),
   };
+
+  const threadId = threadIdFromPath(pathname);
+  if (threadId) state.threadId = threadId;
 
   const extensionId = extensionIdFromPathname(pathname);
   if (extensionId) {
@@ -199,19 +219,21 @@ function resolveView(
   if (pathname.startsWith("/audit")) return "audit";
   if (pathname.startsWith("/dreams")) return "dreams";
   if (pathname.startsWith("/thread-debug")) return "thread-debug";
-  if (pathname.startsWith("/team")) return "team";
+  if (pathname.startsWith("/team")) return "settings";
   return "overview";
 }
 
 function resolvePath(
   view?: string,
   extensions?: DispatchExtensionConfig,
-  command?: Pick<NavigationState, "extensionId">,
+  command?: Pick<NavigationState, "extensionId" | "threadId">,
 ): string | undefined {
   switch (view) {
     case "chat":
     case "ask":
-      return "/chat";
+      return command?.threadId && command.threadId.trim()
+        ? `/chat/${encodeURIComponent(command.threadId.trim())}`
+        : "/chat";
     case "overview":
       return "/overview";
     case "apps":
@@ -249,7 +271,7 @@ function resolvePath(
     case "threads":
       return "/thread-debug";
     case "team":
-      return "/team";
+      return "/settings#team";
     case "extensions":
       return command?.extensionId
         ? `/extensions/${encodeURIComponent(command.extensionId)}`

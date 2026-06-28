@@ -1,14 +1,4 @@
 import {
-  getH3App,
-  awaitBootstrap,
-  markDefaultPluginProvided,
-  trackPluginInit,
-} from "./framework-request-handler.js";
-import {
-  getAllowedCorsOrigin,
-  readCorsAllowedOrigins,
-} from "./cors-origins.js";
-import {
   defineEventHandler,
   setResponseStatus,
   setResponseHeader,
@@ -20,34 +10,89 @@ import {
   getRequestURL,
 } from "h3";
 import type { H3Event } from "h3";
-import path from "node:path";
-import { createPollHandler } from "./poll.js";
-import { createPollEventsHandler } from "./poll-events.js";
-import { createOpenRouteHandler } from "./open-route.js";
-import { createEmbedStartRouteHandler } from "./embed-route.js";
-import { EMBED_TARGET_HEADER } from "../shared/embed-auth.js";
+import { readMultipartFormData } from "h3";
+
+import { DEFAULT_MODEL } from "../agent/default-model.js";
+import { registerBuiltinEngines } from "../agent/engine/builtin.js";
 import {
-  EMBED_TRANSPLANT_HEADER,
-  isMcpEmbedCorsOrigin,
-  MCP_EMBED_CORS_ALLOW_HEADERS,
-  shouldAllowMcpEmbedCredentials,
-} from "../shared/mcp-embed-headers.js";
+  OPENAI_BASE_URL_ENV_VAR,
+  PROVIDER_ENV_META,
+} from "../agent/engine/provider-env-vars.js";
+import {
+  isAgentEngineSettingConfigured,
+  getAgentEngineEntry,
+  detectEngineFromEnv,
+  detectEngineFromUserSecrets,
+  isStoredEngineUsableForRequest,
+} from "../agent/engine/registry.js";
+import {
+  canUpdateAgentLoopSettings,
+  readAgentLoopSettings,
+  resetAgentLoopSettings,
+  validateMaxIterationsInput,
+  writeAgentLoopSettings,
+} from "../agent/loop-settings.js";
+import {
+  getState,
+  putState,
+  deleteState,
+  listComposeDrafts,
+  getComposeDraft,
+  putComposeDraft,
+  deleteComposeDraft,
+  deleteAllComposeDrafts,
+} from "../application-state/handlers.js";
+import { mountBrowserSessionRoutes } from "../browser-sessions/routes.js";
+import { mountDbAdminRoutes } from "../db-admin/routes.js";
+import { getDbExec } from "../db/client.js";
+import {
+  uploadFile,
+  getActiveFileUploadProviderForRequest,
+  listFileUploadProviders,
+} from "../file-upload/index.js";
 import { handleMcpConnect } from "../mcp/connect-route.js";
 import {
   handleMcpOAuth,
   handleMcpOAuthAuthorizationServerMetadata,
   handleMcpOAuthProtectedResourceMetadata,
 } from "../mcp/oauth-route.js";
-import { handleIdentitySso } from "./identity-sso.js";
-import { isIdentitySsoEnabled } from "./identity-sso-store.js";
-import { getAppName } from "./app-name.js";
-import { upsertEnvFile } from "./create-server.js";
-import type { EnvKeyConfig } from "./create-server.js";
+import { registerBuiltinNotificationChannels } from "../notifications/channels.js";
+import { createNotificationsHandler } from "../notifications/routes.js";
+import { getOrgContext } from "../org/context.js";
+import { createProgressHandler } from "../progress/routes.js";
+import { registerFrameworkSecrets } from "../secrets/register-framework-secrets.js";
 import {
-  readBody,
-  DEFAULT_UPLOAD_MAX_FILE_BYTES,
-  isAllowedUploadMimeType,
-} from "./h3-helpers.js";
+  createListSecretsHandler,
+  createWriteSecretHandler,
+  createTestSecretHandler,
+  createAdHocSecretHandler,
+} from "../secrets/routes.js";
+import { getSetting, putSetting, deleteSetting } from "../settings/store.js";
+import {
+  getUserSetting,
+  putUserSetting,
+  deleteUserSetting,
+} from "../settings/user-settings.js";
+import {
+  DEFAULT_SSR_CACHE_HEADERS,
+  EMPTY_SPECULATION_RULES,
+} from "../shared/cache-control.js";
+import { EMBED_TARGET_HEADER } from "../shared/embed-auth.js";
+import { llmConnectionTrackingProperties } from "../shared/llm-connection.js";
+import {
+  EMBED_TRANSPLANT_HEADER,
+  isMcpEmbedCorsOrigin,
+  MCP_EMBED_CORS_ALLOW_HEADERS,
+  shouldAllowMcpEmbedCredentials,
+} from "../shared/mcp-embed-headers.js";
+import { track } from "../tracking/index.js";
+import { registerBuiltinProviders } from "../tracking/providers.js";
+import { validateTrackPayload } from "../tracking/route.js";
+import { createAutomationsHandler } from "../triggers/routes.js";
+import { createAgentEngineApiKeyHandler } from "./agent-engine-api-key-route.js";
+import { getConfiguredAppBasePath, stripAppBasePath } from "./app-base-path.js";
+import { getAppName } from "./app-name.js";
+import { getSession, type AuthSession } from "./auth.js";
 import {
   BUILDER_CONNECT_PARAM,
   BUILDER_CONNECT_OWNER_COOKIE,
@@ -73,82 +118,45 @@ import {
   signBuilderConnectToken,
   type BuilderConnectTrackingParams,
 } from "./builder-browser.js";
+import { captureError } from "./capture-error.js";
 import {
-  getState,
-  putState,
-  deleteState,
-  listComposeDrafts,
-  getComposeDraft,
-  putComposeDraft,
-  deleteComposeDraft,
-  deleteAllComposeDrafts,
-} from "../application-state/handlers.js";
-import { getSetting, putSetting, deleteSetting } from "../settings/store.js";
-import {
-  getUserSetting,
-  putUserSetting,
-  deleteUserSetting,
-} from "../settings/user-settings.js";
-import { getSession, type AuthSession } from "./auth.js";
-import { getAppBasePath, getOrigin } from "./google-oauth.js";
-import { getConfiguredAppBasePath, stripAppBasePath } from "./app-base-path.js";
-import { findWorkspaceRoot } from "../scripts/utils.js";
-import { listOnboardingSteps } from "../onboarding/registry.js";
-import {
-  uploadFile,
-  getActiveFileUploadProvider,
-  listFileUploadProviders,
-} from "../file-upload/index.js";
-import { readMultipartFormData } from "h3";
-import {
-  createListSecretsHandler,
-  createWriteSecretHandler,
-  createTestSecretHandler,
-  createAdHocSecretHandler,
-} from "../secrets/routes.js";
-import { registerFrameworkSecrets } from "../secrets/register-framework-secrets.js";
-import { registerBuiltinProviders } from "../tracking/providers.js";
-import { track } from "../tracking/index.js";
-import { validateTrackPayload } from "../tracking/route.js";
-import { registerBuiltinNotificationChannels } from "../notifications/channels.js";
-import { createNotificationsHandler } from "../notifications/routes.js";
-import { createProgressHandler } from "../progress/routes.js";
-import { createAutomationsHandler } from "../triggers/routes.js";
-import { createGoogleRealtimeSessionHandler } from "./google-realtime-session.js";
-import { createTranscribeVoiceHandler } from "./transcribe-voice.js";
-import { runWithRequestContext } from "./request-context.js";
-import { createVoiceProvidersStatusHandler } from "./voice-providers-status.js";
-import { PROVIDER_ENV_META } from "../agent/engine/provider-env-vars.js";
-import { DEFAULT_MODEL } from "../agent/default-model.js";
+  getAllowedCorsOrigin,
+  readCorsAllowedOrigins,
+} from "./cors-origins.js";
+import type { EnvKeyConfig } from "./create-server.js";
 import {
   canUseDeployCredentialFallbackForRequest,
+  readDeployCredentialEnv,
   resolveSecret,
 } from "./credential-provider.js";
-import { createAgentEngineApiKeyHandler } from "./agent-engine-api-key-route.js";
+import { createEmbedStartRouteHandler } from "./embed-route.js";
 import {
-  canUpdateAgentLoopSettings,
-  readAgentLoopSettings,
-  resetAgentLoopSettings,
-  validateMaxIterationsInput,
-  writeAgentLoopSettings,
-} from "../agent/loop-settings.js";
+  getH3App,
+  awaitBootstrap,
+  markDefaultPluginProvided,
+  trackPluginInit,
+} from "./framework-request-handler.js";
+import { getAppBasePath, getOrigin } from "./google-oauth.js";
+import { createGoogleRealtimeSessionHandler } from "./google-realtime-session.js";
 import {
-  isAgentEngineSettingConfigured,
-  getAgentEngineEntry,
-  detectEngineFromEnv,
-  detectEngineFromUserSecrets,
-  isStoredEngineUsableForRequest,
-} from "../agent/engine/registry.js";
-import { registerBuiltinEngines } from "../agent/engine/builtin.js";
-import { getOrgContext } from "../org/context.js";
-import { isEnvVarWriteAllowed } from "./env-var-writes.js";
-import { llmConnectionTrackingProperties } from "../shared/llm-connection.js";
-import { mountBrowserSessionRoutes } from "../browser-sessions/routes.js";
-import { mountDbAdminRoutes } from "../db-admin/routes.js";
+  readBody,
+  DEFAULT_UPLOAD_MAX_FILE_BYTES,
+  isAllowedUploadMimeType,
+} from "./h3-helpers.js";
+import { isIdentitySsoEnabled } from "./identity-sso-store.js";
+import { handleIdentitySso } from "./identity-sso.js";
+import { createOpenRouteHandler } from "./open-route.js";
+import { createPollEventsHandler } from "./poll-events.js";
+import { createPollHandler } from "./poll.js";
+import { runWithRequestContext } from "./request-context.js";
 import {
-  DEFAULT_SSR_CACHE_HEADERS,
-  EMPTY_SPECULATION_RULES,
-} from "../shared/cache-control.js";
+  findUnsupportedScopedKeyNames,
+  saveKeyValuesToScopedSecrets,
+  ScopedKeyStorageError,
+  type ScopedKeySaveRequestScope,
+} from "./scoped-key-storage.js";
+import { createTranscribeVoiceHandler } from "./transcribe-voice.js";
+import { createVoiceProvidersStatusHandler } from "./voice-providers-status.js";
 
 /**
  * The base path prefix for all framework-level routes.
@@ -158,6 +166,58 @@ import {
 export const FRAMEWORK_ROUTE_PREFIX = "/_agent-native";
 export const FRAMEWORK_EVENTS_ROUTE = `${FRAMEWORK_ROUTE_PREFIX}/events`;
 export const LEGACY_FRAMEWORK_EVENTS_ROUTE = `${FRAMEWORK_ROUTE_PREFIX}/poll-events`;
+
+/** Result of the `/_agent-native/health` liveness + DB-warmup probe. */
+export interface DbHealthProbeResult {
+  /** The serverless function is live and served the request. */
+  ok: true;
+  /** A trivial `SELECT 1` reached the database (false = no DB or unreachable). */
+  db: boolean;
+  /** Round-trip time of the probe in milliseconds. */
+  ms: number;
+}
+
+/**
+ * Run a trivial `SELECT 1` to confirm the database is reachable and, as a side
+ * effect, keep a scale-to-zero serverless database (e.g. Neon) warm. Touching
+ * the DB on a schedule prevents the multi-second cold-start that otherwise
+ * stalls the next real user request.
+ *
+ * Always resolves: an app with no database (or a momentarily unreachable one)
+ * is still live, so the probe reports `db: false` rather than throwing. The
+ * `exec` parameter is injectable purely for tests.
+ */
+export async function runDbHealthProbe(
+  exec: () => { execute: (sql: string) => Promise<unknown> } = getDbExec,
+): Promise<DbHealthProbeResult> {
+  const startedAt = Date.now();
+  let db = false;
+  try {
+    await exec().execute("SELECT 1");
+    db = true;
+  } catch {
+    // Live even when the DB is unreachable or the app has no database.
+  }
+  return { ok: true, db, ms: Date.now() - startedAt };
+}
+const DEFAULT_BUILDER_WAITLIST_FORM_ID = "DYTHuM0jlV";
+const DEFAULT_BUILDER_WAITLIST_FORMS_ORIGIN = "https://forms.agent-native.com";
+const BUILDER_WAITLIST_FORM_SOURCE = "connect_builder_card";
+const BUILDER_WAITLIST_FORM_TIMEOUT_MS = 8000;
+const BUILDER_WAITLIST_TEXT_LIMIT = 4000;
+
+interface BuilderWaitlistFormTarget {
+  formId: string;
+  formsOrigin: string;
+}
+
+interface BuilderWaitlistBody {
+  prompt?: unknown;
+  orgName?: unknown;
+  appUrl?: unknown;
+  pageUrl?: unknown;
+  source?: unknown;
+}
 
 export function resolveFrameworkSseRoutes(sseRoute?: string): string[] {
   return Array.from(
@@ -171,16 +231,118 @@ export function resolveFrameworkSseRoutes(sseRoute?: string): string[] {
 
 registerBuiltinEngines();
 
+function cleanBuilderWaitlistText(
+  value: unknown,
+  maxLength = BUILDER_WAITLIST_TEXT_LIMIT,
+): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  return trimmed.slice(0, maxLength);
+}
+
+function normalizeHttpOrigin(value: string): string | null {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function isAgentNativeHostedRequest(event: H3Event): boolean {
+  const hostname = getRequestURL(event).hostname.toLowerCase();
+  return (
+    hostname === "agent-native.com" || hostname.endsWith(".agent-native.com")
+  );
+}
+
+export function resolveBuilderWaitlistFormTargetForRequest(
+  event: H3Event,
+): BuilderWaitlistFormTarget | null {
+  if (process.env.AGENT_NATIVE_DISABLE_BUILDER_WAITLIST_FORM === "1") {
+    return null;
+  }
+
+  const envFormId = process.env.AGENT_NATIVE_BUILDER_WAITLIST_FORM_ID?.trim();
+  const envFormsOrigin =
+    process.env.AGENT_NATIVE_BUILDER_WAITLIST_FORMS_ORIGIN?.trim();
+  const hasExplicitTarget = Boolean(envFormId || envFormsOrigin);
+  if (!hasExplicitTarget && !isAgentNativeHostedRequest(event)) {
+    return null;
+  }
+
+  const formId = envFormId || DEFAULT_BUILDER_WAITLIST_FORM_ID;
+  const formsOrigin = normalizeHttpOrigin(
+    envFormsOrigin || DEFAULT_BUILDER_WAITLIST_FORMS_ORIGIN,
+  );
+  if (!formsOrigin) {
+    throw new Error("Invalid Builder waitlist Forms origin");
+  }
+
+  return { formId, formsOrigin };
+}
+
+async function submitBuilderWaitlistForm(
+  event: H3Event,
+  sessionEmail: string,
+  body: BuilderWaitlistBody,
+): Promise<{ submitted: boolean; formId?: string }> {
+  const target = resolveBuilderWaitlistFormTargetForRequest(event);
+  if (!target) return { submitted: false };
+
+  const appUrl =
+    cleanBuilderWaitlistText(body.pageUrl ?? body.appUrl, 2000) ??
+    cleanBuilderWaitlistText(getHeader(event, "referer"), 2000) ??
+    getOrigin(event);
+  const source =
+    cleanBuilderWaitlistText(body.source, 100) ?? BUILDER_WAITLIST_FORM_SOURCE;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    BUILDER_WAITLIST_FORM_TIMEOUT_MS,
+  );
+
+  try {
+    const res = await fetch(
+      `${target.formsOrigin}/api/submit/${encodeURIComponent(target.formId)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          data: {
+            email: sessionEmail,
+            orgName: cleanBuilderWaitlistText(body.orgName, 500),
+            appUrl,
+            prompt: cleanBuilderWaitlistText(body.prompt),
+            source,
+          },
+          _hp: "",
+          _meta: {
+            submitterEmail: sessionEmail,
+            pageUrl: appUrl,
+          },
+        }),
+        signal: controller.signal,
+      },
+    );
+    if (!res.ok) {
+      throw new Error(`Forms waitlist submission failed (${res.status})`);
+    }
+    return { submitted: true, formId: target.formId };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function parseBuilderCallbackBoolean(
   value: string | null | undefined,
 ): boolean | null {
   if (value == null || value === "") return null;
   return /^(1|true)$/i.test(value);
 }
-
-const PROVIDER_ENV_VAR_KEYS = new Set(
-  Object.values(PROVIDER_ENV_META).map(({ envVar }) => envVar),
-);
 
 // Raster-only data-URI allowlist for avatar writes. SVG is deliberately absent:
 // data:image/svg+xml payloads can carry inline <script> and event-handler
@@ -409,6 +571,22 @@ export function resolveLegacyToolsRedirect(
   return `${basePath}/extensions${suffix}${search}`;
 }
 
+export function getFrameworkRouteRequestUrl(event: H3Event): URL {
+  const url = getRequestURL(event);
+  if (url.search) return url;
+
+  // In some mounted Nitro/H3 paths, `event.url` is normalized while the raw
+  // Node request URL still has the query string. Builder callbacks carry the
+  // signed `_an_state` there, so preserve it before validating the flow.
+  const rawUrl =
+    event.node?.req?.url ??
+    (typeof event.path === "string" ? event.path : undefined);
+  const queryStart = rawUrl?.indexOf("?") ?? -1;
+  if (queryStart < 0) return url;
+  url.search = rawUrl!.slice(queryStart);
+  return url;
+}
+
 function redactValues(text: string, values: Array<string | null | undefined>) {
   let out = text;
   for (const value of values) {
@@ -426,6 +604,8 @@ export interface CoreRoutesPluginOptions {
   disableSSE?: boolean;
   /** Disable the /_agent-native/ping health check. */
   disablePing?: boolean;
+  /** Disable the /_agent-native/health DB liveness + warmup probe. */
+  disableHealth?: boolean;
   /** Disable the /_agent-native/application-state routes. */
   disableAppState?: boolean;
   /** Disable the /_agent-native/open deep-link route. */
@@ -470,8 +650,9 @@ export interface CoreRoutesPluginOptions {
  *   GET    /_agent-native/poll                          — polling endpoint for change detection
  *   GET    /_agent-native/events (or custom)            — SSE endpoint for real-time sync
  *   GET    /_agent-native/ping                          — health check
+ *   GET    /_agent-native/health                        — DB liveness probe + scale-to-zero warmup
  *   GET    /_agent-native/env-status                    — env key configuration status (when envKeys provided)
- *   POST   /_agent-native/env-vars                      — save env vars to .env (when envKeys provided)
+ *   POST   /_agent-native/env-vars                      — compatibility route that saves keys to scoped DB secrets
  *   GET    /_agent-native/application-state/:key        — read application state
  *   PUT    /_agent-native/application-state/:key        — write application state
  *   DELETE /_agent-native/application-state/:key        — delete application state
@@ -500,20 +681,9 @@ export function createCoreRoutesPlugin(
     try {
       await awaitBootstrap(nitroApp);
 
-      // Restore env vars from the settings table. On serverless, .env
-      // writes don't persist across invocations — the DB is the durable
-      // store. Only set keys that are currently empty so explicit env
-      // vars (Netlify dashboard, process-level) always win.
-      //
-      // GATED: only rehydrate into `process.env` on local-dev SQLite (or
-      // with the explicit single-tenant opt-in). On a shared-DB hosted
-      // multi-tenant deploy the `persisted-env-vars` row is deployment-wide
-      // global state — pushing user-supplied values into `process.env` from
-      // it would let any one tenant's writes (or a stale dev seed) leak
-      // into every other tenant's process. The opt-out scrub of legacy
-      // BUILDER_* values still runs unconditionally so existing rows on
-      // multi-tenant deploys self-heal, but new env-var writes never land
-      // in `process.env` outside the allowed contexts.
+      // Legacy cleanup: key saves now go to scoped app_secrets rows. Do not
+      // rehydrate the old deployment-global `persisted-env-vars` row into
+      // process.env; keep only the Builder scrub so stale leaked keys self-heal.
       try {
         const persisted = (await getSetting("persisted-env-vars")) as Record<
           string,
@@ -521,15 +691,10 @@ export function createCoreRoutesPlugin(
         > | null;
         if (persisted) {
           const builderKeys = new Set<string>(BUILDER_ENV_KEYS);
-          const writesAllowed = isEnvVarWriteAllowed();
           let scrubbed = 0;
-          for (const [k, v] of Object.entries(persisted)) {
+          for (const k of Object.keys(persisted)) {
             if (builderKeys.has(k)) {
               scrubbed++;
-              continue;
-            }
-            if (writesAllowed && typeof v === "string" && !process.env[k]) {
-              process.env[k] = v;
             }
           }
           if (scrubbed > 0) {
@@ -592,6 +757,20 @@ export function createCoreRoutesPlugin(
         );
       } catch {
         // Observability module not available — skip
+      }
+
+      // Audit log — durable, append-only record of who mutated what app data,
+      // when, and (for the agent) in which run. Capture is automatic at the
+      // action seam; here we just ensure the table exists and start the
+      // retention purge. Best-effort so a missing DB never crashes boot.
+      try {
+        const { ensureAuditTables } = await import("../audit/store.js");
+        const { startAuditCleanupJob } =
+          await import("../audit/cleanup-job.js");
+        ensureAuditTables().catch(() => {});
+        startAuditCleanupJob();
+      } catch {
+        // Audit module not available — skip
       }
 
       const P = FRAMEWORK_ROUTE_PREFIX;
@@ -798,6 +977,20 @@ export function createCoreRoutesPlugin(
           defineEventHandler(() => ({
             message: process.env.PING_MESSAGE ?? "pong",
           })),
+        );
+      }
+
+      // Health + DB warmup — liveness probe that touches the database so
+      // uptime monitors and the keep-warm cron prevent a scale-to-zero
+      // serverless DB (e.g. Neon) from cold-starting on the next real
+      // request. Public, side-effect free, and never cached.
+      if (!options.disableHealth) {
+        getH3App(nitroApp).use(
+          `${P}/health`,
+          defineEventHandler(async (event) => {
+            setResponseHeader(event, "cache-control", "no-store");
+            return runDbHealthProbe();
+          }),
         );
       }
 
@@ -1181,10 +1374,7 @@ export function createCoreRoutesPlugin(
             return { error: "Authentication required" };
           }
 
-          const requestUrl = new URL(
-            `${event.url?.pathname || "/"}${event.url?.search || ""}`,
-            getBuilderBrowserOriginForEvent(event),
-          );
+          const requestUrl = getFrameworkRouteRequestUrl(event);
           const connectToken = requestUrl.searchParams.get(
             BUILDER_CONNECT_PARAM,
           );
@@ -1405,10 +1595,10 @@ export function createCoreRoutesPlugin(
       );
 
       // Branch-creation waitlist signup. Used by ConnectBuilderCard when the
-      // current request has no Builder branch project configured — instead of
-      // the raw 403 from /builder/run, the card surfaces a waitlist CTA that
-      // POSTs here. Recorded as a tracking event so PostHog/Mixpanel/etc.
-      // capture demand without us standing up new storage.
+      // current request has no Builder branch project configured. Hosted
+      // Agent Native deployments submit into the Builder-org Forms waitlist;
+      // local/self-hosted deployments keep the analytics signal without
+      // sending private workspace data to Agent Native.
       getH3App(nitroApp).use(
         `${P}/builder/branch-waitlist`,
         defineEventHandler(async (event: H3Event) => {
@@ -1421,15 +1611,43 @@ export function createCoreRoutesPlugin(
             setResponseStatus(event, 401);
             return { error: "Authentication required" };
           }
+          const body = ((await readBody(event).catch(() => ({}))) ??
+            {}) as BuilderWaitlistBody;
+          let formSubmission: { submitted: boolean; formId?: string };
+          try {
+            formSubmission = await submitBuilderWaitlistForm(
+              event,
+              session.email,
+              body,
+            );
+          } catch (err) {
+            await trackBuilderLifecycle(
+              event,
+              "builder branch waitlist form failed",
+              session.email,
+              {
+                reason:
+                  err instanceof Error ? err.message : "unknown_waitlist_error",
+                stage: "waitlist",
+              },
+            );
+            setResponseStatus(event, 502);
+            return {
+              error:
+                "Couldn't join the waitlist. Please try again in a moment.",
+            };
+          }
           await trackBuilderLifecycle(
             event,
             "builder branch waitlist joined",
             session.email,
             {
+              formId: formSubmission.formId ?? null,
+              formSubmitted: formSubmission.submitted,
               stage: "waitlist",
             },
           );
-          return { ok: true };
+          return { ok: true, formSubmitted: formSubmission.submitted };
         }),
       );
 
@@ -1454,9 +1672,7 @@ export function createCoreRoutesPlugin(
           // mismatches and missing/forged _an_state without leaking the
           // signed token itself.
           try {
-            const debugSearch = new URLSearchParams(
-              (event.url?.search || "").replace(/^\?/, ""),
-            );
+            const debugSearch = getFrameworkRouteRequestUrl(event).searchParams;
             const stateRaw = debugSearch.get(BUILDER_STATE_PARAM);
             const stateOwnerProbe =
               verifyBuilderCallbackStateAndGetOwner(stateRaw);
@@ -1473,10 +1689,7 @@ export function createCoreRoutesPlugin(
           }
           clearBuilderConnectOwnerCookie(event);
 
-          const requestUrl = new URL(
-            `${event.url?.pathname || "/"}${event.url?.search || ""}`,
-            getOrigin(event),
-          );
+          const requestUrl = getFrameworkRouteRequestUrl(event);
           let connectTracking = getBuilderConnectTrackingParams(
             requestUrl.searchParams,
           );
@@ -1539,6 +1752,12 @@ export function createCoreRoutesPlugin(
                 agentNativeConnectSource:
                   connectTracking.agentNativeConnectSource ??
                   pending.tracking.agentNativeConnectSource,
+                agentNativeApp:
+                  connectTracking.agentNativeApp ??
+                  pending.tracking.agentNativeApp,
+                agentNativeTemplate:
+                  connectTracking.agentNativeTemplate ??
+                  pending.tracking.agentNativeTemplate,
               };
             }
             if (
@@ -1994,24 +2213,7 @@ export function createCoreRoutesPlugin(
       ];
       {
         const envKeys = [...frameworkEnvKeys, ...(options.envKeys ?? [])];
-
-        // Onboarding form fields are resolved per-request so late-registered
-        // steps (and template overrides) are picked up without a restart.
-        // Builder CLI auth writes scoped Builder credentials through the
-        // credential provider, never through the deploy-global env sink.
-        const collectOnboardingKeys = (): Set<string> => {
-          const keys = new Set<string>();
-          for (const step of listOnboardingSteps()) {
-            for (const method of step.methods) {
-              if (method.kind === "form") {
-                for (const field of method.payload.fields) {
-                  if (field?.key) keys.add(field.key);
-                }
-              }
-            }
-          }
-          return keys;
-        };
+        const allowedEnvKeyNames = envKeys.map(({ key }) => key);
 
         getH3App(nitroApp).use(
           `${P}/env-status`,
@@ -2029,12 +2231,11 @@ export function createCoreRoutesPlugin(
             }
             return Promise.all(
               envKeys.map(async (cfg) => {
-                const isProviderKey = PROVIDER_ENV_VAR_KEYS.has(cfg.key);
-                const configured = isProviderKey
-                  ? await runWithRequestContext({ userEmail, orgId }, () =>
-                      resolveSecret(cfg.key).then(Boolean),
-                    )
-                  : !!process.env[cfg.key];
+                const configured =
+                  Boolean(process.env[cfg.key]) ||
+                  (await runWithRequestContext({ userEmail, orgId }, () =>
+                    resolveSecret(cfg.key).then(Boolean),
+                  ));
                 return {
                   key: cfg.key,
                   label: cfg.label,
@@ -2055,101 +2256,37 @@ export function createCoreRoutesPlugin(
               return { error: "Method not allowed" };
             }
 
-            // Env vars are deployment-wide globals, not per-tenant. On any
-            // shared-DB multi-tenant deploy, allowing authenticated users to
-            // write here lets one tenant overwrite Stripe / OpenAI / Sentry
-            // keys for every other tenant. Disable the endpoint outside of
-            // local-dev SQLite or an explicit single-tenant opt-in, and
-            // direct callers to scoped secret/credential stores instead.
-            if (!isEnvVarWriteAllowed()) {
-              setResponseStatus(event, 403);
-              return {
-                error:
-                  "env-vars endpoint disabled on multi-tenant deployments. Use scoped secrets or credentials for user/org API keys.",
-              };
-            }
-
             const body = await readBody(event);
-            const { vars } = body as {
+            const { vars, scope } = body as {
               vars?: Array<{ key: string; value: string }>;
+              scope?: ScopedKeySaveRequestScope;
             };
-
-            if (!Array.isArray(vars) || vars.length === 0) {
-              setResponseStatus(event, 400);
-              return { error: "vars array required" };
-            }
-
-            const allowedKeys = new Set<string>([
-              ...envKeys.map((k) => k.key),
-              ...collectOnboardingKeys(),
-            ]);
-            const blockedEnvVarWriteKeys = new Set<string>(BUILDER_ENV_KEYS);
-            const isWritableEnvKey = (key: string) =>
-              allowedKeys.has(key) && !blockedEnvVarWriteKeys.has(key);
-
-            const filtered = vars.filter(
-              (v) =>
-                typeof v.key === "string" &&
-                isWritableEnvKey(v.key) &&
-                typeof v.value === "string" &&
-                v.value.trim().length > 0,
+            const unsupportedKeys = findUnsupportedScopedKeyNames(
+              vars,
+              allowedEnvKeyNames,
             );
-            if (filtered.length === 0) {
+            if (unsupportedKeys.length > 0) {
               setResponseStatus(event, 400);
-              const rejectedEmpty = vars.some(
-                (v) =>
-                  typeof v.key === "string" &&
-                  isWritableEnvKey(v.key) &&
-                  (typeof v.value !== "string" || v.value.trim().length === 0),
-              );
               return {
-                error: rejectedEmpty
-                  ? "Env values must be non-empty — refusing to clear a saved key"
-                  : "No recognized env keys in request",
+                error: `Unsupported env key${unsupportedKeys.length === 1 ? "" : "s"}: ${unsupportedKeys.join(", ")}`,
               };
             }
 
-            // Write to .env file. When inside a workspace, write to the
-            // workspace root .env so keys are shared across every app. The
-            // per-app .env still wins at load time if it also defines a key.
             try {
-              const scope =
-                (body as { scope?: "workspace" | "app" })?.scope ?? "auto";
-              const workspaceRoot = findWorkspaceRoot(process.cwd());
-              const envPath =
-                scope === "app"
-                  ? path.join(process.cwd(), ".env")
-                  : workspaceRoot
-                    ? path.join(workspaceRoot, ".env")
-                    : path.join(process.cwd(), ".env");
-              await upsertEnvFile(envPath, filtered);
-            } catch {
-              // Edge runtime — skip file write
+              const result = await saveKeyValuesToScopedSecrets(
+                event,
+                vars,
+                scope,
+              );
+              return { saved: result.saved, storage: "scoped-secrets" };
+            } catch (err) {
+              if (err instanceof ScopedKeyStorageError) {
+                setResponseStatus(event, err.statusCode);
+                return { error: err.message };
+              }
+              setResponseStatus(event, 500);
+              return { error: "Failed to save keys" };
             }
-
-            // Update process.env immediately
-            for (const { key, value } of filtered) {
-              process.env[key] = value;
-            }
-
-            // Persist to settings table for serverless cold-start recovery.
-            try {
-              const envMap: Record<string, string> = {};
-              for (const { key, value } of filtered) envMap[key] = value;
-              const existing =
-                ((await getSetting("persisted-env-vars")) as Record<
-                  string,
-                  string
-                > | null) ?? {};
-              await putSetting("persisted-env-vars", {
-                ...existing,
-                ...envMap,
-              });
-            } catch {
-              // DB not ready yet — skip
-            }
-
-            return { saved: filtered.map((v) => v.key) };
           }),
         );
       }
@@ -2178,6 +2315,20 @@ export function createCoreRoutesPlugin(
                 /* org module not present in this template */
               }
             }
+            const openAiBaseUrlConfigured = await runWithRequestContext(
+              { userEmail, orgId },
+              async () => {
+                try {
+                  if (await resolveSecret(OPENAI_BASE_URL_ENV_VAR)) return true;
+                } catch {
+                  /* fall through to deployment env when allowed */
+                }
+                return (
+                  canUseDeployCredentialFallbackForRequest() &&
+                  !!readDeployCredentialEnv(OPENAI_BASE_URL_ENV_VAR)
+                );
+              },
+            );
             const stored = (await getSetting("agent-engine")) as {
               engine?: string;
               model?: string;
@@ -2190,6 +2341,7 @@ export function createCoreRoutesPlugin(
                 engine,
                 model: stored?.model ?? entry?.defaultModel ?? DEFAULT_MODEL,
                 source: "settings" as const,
+                openAiBaseUrlConfigured,
               };
             }
             const envEntry = process.env.AGENT_ENGINE
@@ -2205,7 +2357,7 @@ export function createCoreRoutesPlugin(
                   ),
               );
               if (!envUsable) {
-                return { configured: false };
+                return { configured: false, openAiBaseUrlConfigured };
               }
               return {
                 configured: true,
@@ -2213,6 +2365,7 @@ export function createCoreRoutesPlugin(
                 model: envEntry.defaultModel ?? DEFAULT_MODEL,
                 source: "env" as const,
                 envVar: "AGENT_ENGINE",
+                openAiBaseUrlConfigured,
               };
             }
             // Per-user app_secrets — a user who connected Builder (or pasted
@@ -2230,6 +2383,7 @@ export function createCoreRoutesPlugin(
                 model: detectedFromUser.defaultModel ?? DEFAULT_MODEL,
                 source: "app_secrets" as const,
                 envVar: detectedFromUser.requiredEnvVars[0],
+                openAiBaseUrlConfigured,
               };
             }
             if (stored && typeof stored.engine === "string") {
@@ -2246,6 +2400,7 @@ export function createCoreRoutesPlugin(
                   model: stored.model ?? entry.defaultModel ?? DEFAULT_MODEL,
                   source: "env" as const,
                   envVar: entry.requiredEnvVars[0],
+                  openAiBaseUrlConfigured,
                 };
               }
             }
@@ -2256,6 +2411,7 @@ export function createCoreRoutesPlugin(
                 model: detectedFromUser.defaultModel ?? DEFAULT_MODEL,
                 source: "app_secrets" as const,
                 envVar: detectedFromUser.requiredEnvVars[0],
+                openAiBaseUrlConfigured,
               };
             }
             const canUseDeployEnv = await runWithRequestContext(
@@ -2270,6 +2426,7 @@ export function createCoreRoutesPlugin(
                 model: detected.defaultModel ?? DEFAULT_MODEL,
                 source: "env" as const,
                 envVar: detected.requiredEnvVars[0],
+                openAiBaseUrlConfigured,
               };
             }
           } catch {}
@@ -2494,54 +2651,69 @@ export function createCoreRoutesPlugin(
       getH3App(nitroApp).use(
         `${P}/file-upload/status`,
         defineEventHandler(async (event) => {
-          const active = getActiveFileUploadProvider();
           // resolveBuilderPrivateKey() reads per-user credentials from app_secrets
           // (DB), which requires request context (AsyncLocalStorage) to know which
           // user to scope by. Without runWithRequestContext() the ALS store is empty
           // and it falls back to process.env only — missing OAuth-connected users.
           const session = await getSession(event).catch(() => null);
           const userEmail = session?.email;
-          let builderConfigured = !!process.env.BUILDER_PRIVATE_KEY;
-          try {
-            const { resolveBuilderPrivateKey } =
-              await import("./credential-provider.js");
-            const resolve = () => resolveBuilderPrivateKey().then((k) => !!k);
-            builderConfigured = userEmail
-              ? await runWithRequestContext(
-                  { userEmail, orgId: session?.orgId },
-                  resolve,
-                )
-              : await resolve();
-          } catch {
-            // fall back to env check above
-          }
-          // When the builder builtin is selected via env var, its sync
-          // isConfigured() doesn't reflect per-user OAuth credentials. Use the
-          // async builderConfigured check so the status accurately represents
-          // whether this specific user can actually upload (thread 7 fix).
-          const isBuilderEnvActive = active?.id === "builder";
-          const configured = isBuilderEnvActive
-            ? builderConfigured
-            : !!active || builderConfigured;
-          const activeProvider = isBuilderEnvActive
-            ? builderConfigured
-              ? { id: "builder", name: "Builder.io" }
-              : null
-            : active
-              ? { id: active.id, name: active.name }
-              : builderConfigured
+          const resolveStatus = async () => {
+            const active = await getActiveFileUploadProviderForRequest();
+            let builderConfigured = !!process.env.BUILDER_PRIVATE_KEY;
+            try {
+              const { resolveBuilderPrivateKey } =
+                await import("./credential-provider.js");
+              builderConfigured = await resolveBuilderPrivateKey().then(
+                (k) => !!k,
+              );
+            } catch {
+              // fall back to env check above
+            }
+
+            const providers = await Promise.all(
+              listFileUploadProviders().map(async (p) => {
+                const scopedConfigured = p.isConfiguredForRequest
+                  ? await p.isConfiguredForRequest().catch(() => false)
+                  : false;
+                return {
+                  id: p.id,
+                  name: p.name,
+                  configured: p.isConfigured() || scopedConfigured,
+                };
+              }),
+            );
+
+            // When the builder builtin is selected via env var, its sync
+            // isConfigured() doesn't reflect per-user OAuth credentials. Use
+            // builderConfigured so status reflects this specific request.
+            const isBuilderEnvActive = active?.id === "builder";
+            const configured = isBuilderEnvActive
+              ? builderConfigured
+              : !!active || builderConfigured;
+            const activeProvider = isBuilderEnvActive
+              ? builderConfigured
                 ? { id: "builder", name: "Builder.io" }
-                : null;
-          return {
-            configured,
-            activeProvider,
-            providers: listFileUploadProviders().map((p) => ({
-              id: p.id,
-              name: p.name,
-              configured: p.isConfigured(),
-            })),
-            builderConfigured,
+                : null
+              : active
+                ? { id: active.id, name: active.name }
+                : builderConfigured
+                  ? { id: "builder", name: "Builder.io" }
+                  : null;
+
+            return {
+              configured,
+              activeProvider,
+              providers,
+              builderConfigured,
+            };
           };
+
+          return userEmail
+            ? runWithRequestContext(
+                { userEmail, orgId: session?.orgId },
+                resolveStatus,
+              )
+            : resolveStatus();
         }),
       );
 
@@ -2950,6 +3122,83 @@ export function createCoreRoutesPlugin(
         getH3App(nitroApp).use(
           `${P}/embed/start`,
           createEmbedStartRouteHandler({ getExistingSession: getSession }),
+        );
+
+        // POST /_agent-native/mcp/embed-error — telemetry sink for MCP App
+        // embed shells. The shell runs in a sandboxed, opaque-origin iframe
+        // (Codex, Cursor, ChatGPT, Claude) with no session cookie or CSRF
+        // token, so this endpoint is intentionally unauthenticated and
+        // CORS-open to the SAME sandbox origins as /embed/start. It forwards a
+        // small, bounded diagnostic payload to Sentry via captureError so we
+        // can see *why* an inline embed failed (handshake timeout, transplant
+        // fetch status/CORS, auth, CSP) per host. Best-effort: always 204,
+        // never throws, body capped, no client-trusted identity.
+        getH3App(nitroApp).use(
+          `${P}/mcp/embed-error`,
+          defineEventHandler(async (event: H3Event) => {
+            const origin = getHeader(event, "origin");
+            if (origin && isMcpEmbedCorsOrigin(origin)) {
+              setResponseHeader(event, "Access-Control-Allow-Origin", origin);
+              setResponseHeader(event, "Vary", "Origin");
+              setResponseHeader(
+                event,
+                "Access-Control-Allow-Methods",
+                "POST,OPTIONS",
+              );
+              setResponseHeader(
+                event,
+                "Access-Control-Allow-Headers",
+                MCP_EMBED_CORS_ALLOW_HEADERS,
+              );
+            }
+            const method = getMethod(event);
+            if (method === "OPTIONS") {
+              setResponseStatus(event, 204);
+              return "";
+            }
+            if (method !== "POST") {
+              setResponseStatus(event, 405);
+              return { error: "Method not allowed" };
+            }
+            const body = await readBody(event).catch(() => undefined);
+            const rec =
+              body && typeof body === "object" && !Array.isArray(body)
+                ? (body as Record<string, unknown>)
+                : {};
+            const str = (value: unknown, max: number): string | undefined =>
+              typeof value === "string" && value
+                ? value.slice(0, max)
+                : undefined;
+            const message = str(rec.message, 500) ?? "MCP embed failed";
+            try {
+              captureError(new Error(message), {
+                route: `${P}/mcp/embed-error`,
+                method: "POST",
+                userAgent:
+                  str(rec.userAgent, 300) ?? getHeader(event, "user-agent"),
+                tags: {
+                  source: "mcp-embed-shell",
+                  embed_stage: str(rec.stage, 60),
+                  embed_render_mode: str(rec.renderMode, 40),
+                  embed_host: str(rec.host, 160),
+                  embed_bridge: str(rec.bridge, 40),
+                },
+                extra: {
+                  embedUrl: str(rec.url, 600),
+                  httpStatus:
+                    typeof rec.status === "number"
+                      ? rec.status
+                      : str(rec.status, 40),
+                  detail: str(rec.detail, 1200),
+                  origin,
+                },
+              });
+            } catch {
+              // Observability must never throw back into the request path.
+            }
+            setResponseStatus(event, 204);
+            return "";
+          }),
         );
       }
 

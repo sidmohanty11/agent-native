@@ -35,6 +35,10 @@ the shared package (`@{{APP_NAME}}/shared`).
 
 The workspace root also links `.agents/skills` to the shared package so coding
 agents launched from the root can discover the same workspace-wide skills.
+Run `pnpm skills:update` (or
+`npx @agent-native/core@latest skills update scaffold --project`) after updating
+`@agent-native/core` to refresh framework-provided shared skills and repair
+Claude compatibility links.
 
 Runtime-editable global resources live in Dispatch, not in `packages/shared`.
 Use Dispatch **Resources** for company context and guardrails that admins should
@@ -93,7 +97,7 @@ cross-app trust:
 - `A2A_SECRET` — shared signing secret for cross-app A2A calls.
 
 Run `pnpm repair:workspace-org -- --name "<org>" --domain example.com --owner-email owner@example.com`
-to fill or validate those values without committing secrets. Existing
+to validate those values without writing env files. Existing
 organization rows should still be repaired through the app's org settings UI or
 authenticated org routes whenever possible.
 

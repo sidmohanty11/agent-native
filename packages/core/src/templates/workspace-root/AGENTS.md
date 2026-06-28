@@ -9,18 +9,28 @@ coding agents can discover the same workspace-wide guidance from the root.
 ## Framework Docs Lookup
 
 Version-matched Agent Native docs ship with `@agent-native/core` in
-`node_modules/@agent-native/core/docs`.
+`node_modules/@agent-native/core/docs`. A source-only corpus of core and
+first-party template patterns ships in `node_modules/@agent-native/core/corpus`.
 
 - From an app directory, use `pnpm action docs-search --query "<topic>"`,
   `pnpm action docs-search --slug <slug>`, or `pnpm action docs-search --list`.
+  Use `pnpm action source-search --query "<pattern>"` or
+  `pnpm action source-search --path <path>` when source examples matter.
 - From the workspace root, read `node_modules/@agent-native/core/docs/AGENTS.md`
   and search `node_modules/@agent-native/core/docs/content/` directly with `rg`.
+  Search `node_modules/@agent-native/core/corpus/` for core and template source
+  examples.
 - For advanced workspace features, start with `workspace`, `multi-app-workspace`,
   `a2a-protocol`, `pure-agent-apps`, `automations`, `recurring-jobs`,
   `external-agents`, `mcp-protocol`, `sharing`, and `security`.
 
-Use package docs for framework APIs, and use `packages/shared/AGENTS.md` plus
+Use package docs for framework APIs, the package corpus for reusable
+framework/template patterns, and `packages/shared/AGENTS.md` plus
 `packages/shared/.agents/skills/` for workspace-specific conventions.
+After updating `@agent-native/core`, run `pnpm skills:update` or
+`npx @agent-native/core@latest skills update scaffold --project` from the
+workspace root to refresh framework-provided shared skills and repair
+`CLAUDE.md` / `.claude/skills` compatibility links.
 
 ## Core Agent Rule
 
@@ -160,7 +170,8 @@ Use the workspace root `.env` for shared identity and cross-app trust settings:
 - `WORKSPACE_OWNER_EMAIL` — initial owner/admin email for repairs and
   integration defaults.
 - `A2A_SECRET` — shared secret for cross-app A2A signing. Generate with
-  `openssl rand -hex 32` or `pnpm repair:workspace-org -- --name ...`.
+  `openssl rand -hex 32` and configure through your deployment/scoped secret
+  manager.
 
 `DISPATCH_DEFAULT_OWNER_EMAIL` is optional. Set it only for trusted,
 single-workspace deployments where unlinked integration requests should run as
@@ -173,7 +184,7 @@ When asked to repair workspace org or A2A configuration:
 1. Read `.env` first. Do not infer the organization, domain, owner email, or
    secret from old examples.
 2. Run `pnpm repair:workspace-org -- --name "<org>" --domain example.com --owner-email owner@example.com`
-   to create or update generic workspace identity values.
+   to validate generic workspace identity values without writing `.env`.
 3. Prefer the app's organization settings UI or authenticated org routes for
    changing `allowed_domain` and `a2a_secret`.
 4. If direct SQL is unavoidable, inspect the live schema first and use only

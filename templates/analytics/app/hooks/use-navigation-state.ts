@@ -3,6 +3,7 @@ import {
   useAgentRouteState,
 } from "@agent-native/core/client";
 import { useLocation } from "react-router";
+
 import { rememberLastOpened } from "@/lib/last-opened";
 import { TAB_ID } from "@/lib/tab-id";
 
@@ -11,24 +12,29 @@ interface NavigationState {
   dashboardId?: string;
   analysisId?: string;
   extensionId?: string;
+  recordingId?: string;
+  filters?: Record<string, string>;
 }
 
-// URL query params (filters) are synced separately by the framework's <URLSync />
-// under the `__url__` key, so the agent sees them in the <current-url> block.
+const SESSION_FILTER_KEYS = ["range", "app", "q"] as const;
+
 export function useNavigationState() {
   const location = useLocation();
   useAgentRouteState<NavigationState>({
     browserTabId: TAB_ID,
-    getNavigationState: ({ pathname }) => {
-      const state: NavigationState = { view: "overview" };
+    getNavigationState: ({ pathname, searchParams }) => {
+      const state: NavigationState = { view: "ask" };
 
       if (pathname === "/" || pathname === "" || pathname === "/overview") {
-        state.view = "overview";
+        state.view = "ask";
       } else if (pathname === "/ask") {
         state.view = "ask";
-      } else if (pathname.startsWith("/adhoc/")) {
+      } else if (
+        pathname.startsWith("/dashboards/") ||
+        pathname.startsWith("/adhoc/")
+      ) {
         state.view = "adhoc";
-        const match = pathname.match(/\/adhoc\/(.+)/);
+        const match = pathname.match(/\/(?:adhoc|dashboards)\/(.+)/);
         if (match) {
           state.dashboardId = match[1];
           localStorage.setItem("last-dashboard-id", match[1]);
@@ -52,6 +58,16 @@ export function useNavigationState() {
           state.extensionId = match[1];
           rememberLastOpened("extension", match[1], pathname);
         }
+      } else if (pathname === "/sessions") {
+        state.view = "sessions";
+        state.filters = sessionFilters(searchParams);
+      } else if (pathname.startsWith("/sessions/")) {
+        state.view = "sessions";
+        const match = pathname.match(/\/sessions\/([^/]+)/);
+        if (match) {
+          state.recordingId = decodeURIComponent(match[1]);
+        }
+        state.filters = sessionFilters(searchParams);
       } else if (pathname === "/data-sources") {
         state.view = "data-sources";
       } else if (pathname === "/data-dictionary") {
@@ -60,28 +76,28 @@ export function useNavigationState() {
         state.view = "catalog";
       } else if (pathname === "/settings") {
         state.view = "settings";
-      } else if (pathname === "/about") {
-        state.view = "about";
       }
 
       return state;
     },
     getCommandPath: (cmd) => {
       if (cmd.view === "adhoc" && cmd.dashboardId)
-        return `/adhoc/${cmd.dashboardId}`;
+        return `/dashboards/${cmd.dashboardId}`;
       if (cmd.view === "analyses" && cmd.analysisId)
         return `/analyses/${cmd.analysisId}`;
       if (cmd.view === "analyses") return "/analyses";
       if (cmd.view === "extensions" && cmd.extensionId)
         return `/extensions/${cmd.extensionId}`;
       if (cmd.view === "extensions") return "/extensions";
+      if (cmd.view === "sessions" && cmd.recordingId)
+        return `/sessions/${encodeURIComponent(cmd.recordingId)}`;
+      if (cmd.view === "sessions") return "/sessions";
       if (cmd.view === "data-sources") return "/data-sources";
       if (cmd.view === "data-dictionary") return "/data-dictionary";
       if (cmd.view === "catalog") return "/catalog";
       if (cmd.view === "ask") return "/ask";
       if (cmd.view === "settings") return "/settings";
-      if (cmd.view === "overview") return "/overview";
-      if (cmd.view === "about") return "/about";
+      if (cmd.view === "overview" || cmd.view === "home") return "/ask";
       return "/";
     },
     onNavigate: (_command, path) => {
@@ -94,4 +110,18 @@ export function useNavigationState() {
 
 function pathnameFromPath(path: string): string {
   return path.split(/[?#]/, 1)[0] || "/";
+}
+
+function sessionFilters(
+  searchParams?: URLSearchParams | Record<string, string>,
+): Record<string, string> | undefined {
+  const filters: Record<string, string> = {};
+  for (const key of SESSION_FILTER_KEYS) {
+    const value =
+      searchParams instanceof URLSearchParams
+        ? searchParams.get(key)
+        : searchParams?.[key];
+    if (value) filters[key] = value;
+  }
+  return Object.keys(filters).length > 0 ? filters : undefined;
 }
