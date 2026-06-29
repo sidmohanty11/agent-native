@@ -17,7 +17,13 @@ import { parsePlanMdxFolder, type PlanMdxFolder } from "../server/plan-mdx.js";
  * `plan local verify` CLI can call it against a local or hosted Plan app.
  */
 
-const MAX_MDX_BYTES = 4 * 1024 * 1024;
+// Must cover the largest folder the `plan local verify` CLI can package so
+// authoritative validation runs instead of silently downgrading to the offline
+// lint: the CLI caps local assets at 10 MiB raw
+// (LOCAL_PLAN_ASSET_MAX_TOTAL_BYTES), which inflates to ~13.3 MiB once base64
+// encoded, plus the MDX/state text. 16 MiB leaves headroom while still bounding
+// the public, no-auth payload.
+const MAX_MDX_BYTES = 16 * 1024 * 1024;
 
 const mdxFolderSchema = z.object({
   "plan.mdx": z.string().min(1),
@@ -77,6 +83,7 @@ export default defineAction({
   }),
   http: { method: "POST" },
   readOnly: true,
+  requiresAuth: false,
   publicAgent: {
     expose: true,
     readOnly: true,

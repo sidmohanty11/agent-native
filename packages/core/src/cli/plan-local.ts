@@ -1040,16 +1040,21 @@ function lintColumnsBlocks(
     const start = match.index;
     const openingEnd = findJsxOpeningTagEnd(scanSource, start);
     if (openingEnd < 0) continue;
-    const opening = scanSource.slice(start, openingEnd + 1);
-    if (/\bcolumns\s*=/.test(opening)) {
-      addValidationIssue(
-        issues,
-        file,
-        source,
-        start,
-        'Columns must use <Column> children, not a columns= prop. Use <Columns><Column label="Before">...</Column><Column label="After">...</Column></Columns>.',
-      );
-    }
+    const opening = source.slice(start, openingEnd + 1);
+    const columnsAttr = readJsxAttribute(opening, "columns");
+    if (!columnsAttr) continue;
+    const entries =
+      columnsAttr.kind === "expression"
+        ? extractTopLevelObjectLiterals(columnsAttr.value)
+        : null;
+    if (entries && entries.length > 0) continue;
+    addValidationIssue(
+      issues,
+      file,
+      source,
+      start,
+      'Columns must use <Column> children or a columns={[{ id, label, blocks }]} array, not a bare columns= prop. Use <Columns><Column label="Before">...</Column><Column label="After">...</Column></Columns>.',
+    );
   }
 }
 
