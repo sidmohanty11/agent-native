@@ -1716,10 +1716,10 @@ export function embedApp(
       if (openUrl || openStartUrl) {
         void launchEmbed();
       } else if (!appFrame) {
-        // No open URL yet — collapse instead of showing a tall empty box. We
-        // keep syncing on set_globals, so a later toolOutput with a URL still
-        // renders.
-        collapseEmptyEmbed();
+        // No open URL yet — a content-less result no longer reaches the host as
+        // a widget (build-server marks it isError), so this is the transient
+        // "waiting for the embed to resolve" state, not an empty box.
+        setMessage("Waiting for app result");
       }
       return true;
     }
