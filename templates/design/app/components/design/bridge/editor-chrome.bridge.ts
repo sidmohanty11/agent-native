@@ -5106,10 +5106,22 @@ declare var __DESIGN_CANVAS_BOARD_SURFACE__: boolean;
     stopNativeInteraction(e);
     var eventTarget =
       e && e.target && e.target.nodeType === 1 ? e.target : null;
-    var target =
-      findTextEditTarget(elementFromEditorPoint(e.clientX, e.clientY)) ||
-      findTextEditTarget(eventTarget) ||
-      eventTarget;
+    var programmaticTextEdit =
+      !!e &&
+      (e as unknown as { agentNativeProgrammaticTextEdit?: boolean })
+        .agentNativeProgrammaticTextEdit === true;
+    // For the programmatic (begin-text-edit) path the caller already resolved
+    // the exact node to edit and passed it as e.target. Do NOT re-resolve via
+    // elementFromPoint: a freshly-created text node is 0×0, so a point at its
+    // edge resolves to whatever is underneath — the parent screen container
+    // (<main>) — which would put the ENTIRE screen into edit mode instead of the
+    // new text node (keystrokes land in the wrong element, the new node stays
+    // empty, and focus is lost). Honor the explicit target instead.
+    var target = programmaticTextEdit
+      ? findTextEditTarget(eventTarget) || eventTarget
+      : findTextEditTarget(elementFromEditorPoint(e.clientX, e.clientY)) ||
+        findTextEditTarget(eventTarget) ||
+        eventTarget;
     if (!target || target.nodeType !== 1) return;
     // Anchor the selection identity to the nearest source-backed element. Text
     // editing still operates on the actual target text node, but a later
@@ -5117,10 +5129,6 @@ declare var __DESIGN_CANVAS_BOARD_SURFACE__: boolean;
     // code-layer node rather than a runtime-only descendant (which would emit a
     // brittle body > div:nth-of-type(...) selector that never resolves).
     selectedEl = selectionTargetForHit(target) || target;
-    var programmaticTextEdit =
-      !!e &&
-      (e as unknown as { agentNativeProgrammaticTextEdit?: boolean })
-        .agentNativeProgrammaticTextEdit === true;
     var originalText = target.textContent || "";
     var originalHtml = target.innerHTML || "";
     var originalMinWidth = target.style.minWidth;
@@ -5129,6 +5137,9 @@ declare var __DESIGN_CANVAS_BOARD_SURFACE__: boolean;
     var originalOutline = target.style.outline;
     var originalOutlineOffset = target.style.outlineOffset;
     var committed = false;
+    // Tracks an in-flight IME / dictation composition so Enter/Escape don't
+    // commit mid-composition and composed input isn't double-counted.
+    var composing = false;
     activeTextEditEl = target;
     target.setAttribute("contenteditable", "true");
     target.setAttribute("data-agent-native-text-editing", "true");
@@ -5159,6 +5170,8 @@ declare var __DESIGN_CANVAS_BOARD_SURFACE__: boolean;
       target.removeEventListener("input", onInput, true);
       target.removeEventListener("keyup", onSelectionChange, true);
       target.removeEventListener("mouseup", onSelectionChange, true);
+      target.removeEventListener("compositionstart", onCompositionStart, true);
+      target.removeEventListener("compositionend", onCompositionEnd, true);
       document.removeEventListener("selectionchange", onSelectionChange);
       target.removeAttribute("contenteditable");
       target.removeAttribute("data-agent-native-text-editing");
@@ -5201,7 +5214,21 @@ declare var __DESIGN_CANVAS_BOARD_SURFACE__: boolean;
       finish(true);
     }
 
+    function onCompositionStart() {
+      composing = true;
+    }
+
+    function onCompositionEnd() {
+      composing = false;
+      updateTextEditingChrome(target, originalMinWidth, originalMinHeight);
+      postTextEditingState(target, true);
+    }
+
     function onKeyDown(ev) {
+      // Never treat Enter/Escape as commit/cancel while an IME or dictation
+      // composition is in flight — that is the composition confirm keystroke,
+      // and intercepting it corrupts/duplicates the composed text.
+      if (ev.isComposing || composing) return;
       if (ev.key === "Escape") {
         ev.preventDefault();
         finish(true);
@@ -5240,9 +5267,28 @@ declare var __DESIGN_CANVAS_BOARD_SURFACE__: boolean;
     target.addEventListener("input", onInput, true);
     target.addEventListener("keyup", onSelectionChange, true);
     target.addEventListener("mouseup", onSelectionChange, true);
+    target.addEventListener("compositionstart", onCompositionStart, true);
+    target.addEventListener("compositionend", onCompositionEnd, true);
     document.addEventListener("selectionchange", onSelectionChange);
     target.focus();
-    placeTextCaretFromPoint(target, e.clientX, e.clientY);
+    if (programmaticTextEdit) {
+      // The synthesized point is at the (0×0) node's edge and resolves to the
+      // parent element, so caretRangeFromPoint would place the caret OUTSIDE the
+      // editable node. Collapse the caret to the end of the target's own
+      // contents instead.
+      try {
+        var progRange = document.createRange();
+        progRange.selectNodeContents(target);
+        progRange.collapse(false);
+        var progSel = window.getSelection();
+        progSel.removeAllRanges();
+        progSel.addRange(progRange);
+      } catch {
+        /* selection APIs unavailable — focus() alone still enables typing */
+      }
+    } else {
+      placeTextCaretFromPoint(target, e.clientX, e.clientY);
+    }
   }
 
   shieldOverlay.addEventListener("dblclick", beginTextEditingFromEvent, true);

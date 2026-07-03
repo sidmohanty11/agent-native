@@ -3961,10 +3961,10 @@ export const editorChromeBridgeScript: string = `"use strict";
       }
       stopNativeInteraction(e);
       var eventTarget = e && e.target && e.target.nodeType === 1 ? e.target : null;
-      var target = findTextEditTarget(elementFromEditorPoint(e.clientX, e.clientY)) || findTextEditTarget(eventTarget) || eventTarget;
+      var programmaticTextEdit = !!e && e.agentNativeProgrammaticTextEdit === true;
+      var target = programmaticTextEdit ? findTextEditTarget(eventTarget) || eventTarget : findTextEditTarget(elementFromEditorPoint(e.clientX, e.clientY)) || findTextEditTarget(eventTarget) || eventTarget;
       if (!target || target.nodeType !== 1) return;
       selectedEl = selectionTargetForHit(target) || target;
-      var programmaticTextEdit = !!e && e.agentNativeProgrammaticTextEdit === true;
       var originalText = target.textContent || "";
       var originalHtml = target.innerHTML || "";
       var originalMinWidth = target.style.minWidth;
@@ -3973,6 +3973,7 @@ export const editorChromeBridgeScript: string = `"use strict";
       var originalOutline = target.style.outline;
       var originalOutlineOffset = target.style.outlineOffset;
       var committed = false;
+      var composing = false;
       activeTextEditEl = target;
       target.setAttribute("contenteditable", "true");
       target.setAttribute("data-agent-native-text-editing", "true");
@@ -4002,6 +4003,8 @@ export const editorChromeBridgeScript: string = `"use strict";
         target.removeEventListener("input", onInput, true);
         target.removeEventListener("keyup", onSelectionChange, true);
         target.removeEventListener("mouseup", onSelectionChange, true);
+        target.removeEventListener("compositionstart", onCompositionStart, true);
+        target.removeEventListener("compositionend", onCompositionEnd, true);
         document.removeEventListener("selectionchange", onSelectionChange);
         target.removeAttribute("contenteditable");
         target.removeAttribute("data-agent-native-text-editing");
@@ -4042,7 +4045,16 @@ export const editorChromeBridgeScript: string = `"use strict";
         }
         finish(true);
       }
+      function onCompositionStart() {
+        composing = true;
+      }
+      function onCompositionEnd() {
+        composing = false;
+        updateTextEditingChrome(target, originalMinWidth, originalMinHeight);
+        postTextEditingState(target, true);
+      }
       function onKeyDown(ev) {
+        if (ev.isComposing || composing) return;
         if (ev.key === "Escape") {
           ev.preventDefault();
           finish(true);
@@ -4077,9 +4089,23 @@ export const editorChromeBridgeScript: string = `"use strict";
       target.addEventListener("input", onInput, true);
       target.addEventListener("keyup", onSelectionChange, true);
       target.addEventListener("mouseup", onSelectionChange, true);
+      target.addEventListener("compositionstart", onCompositionStart, true);
+      target.addEventListener("compositionend", onCompositionEnd, true);
       document.addEventListener("selectionchange", onSelectionChange);
       target.focus();
-      placeTextCaretFromPoint(target, e.clientX, e.clientY);
+      if (programmaticTextEdit) {
+        try {
+          var progRange = document.createRange();
+          progRange.selectNodeContents(target);
+          progRange.collapse(false);
+          var progSel = window.getSelection();
+          progSel.removeAllRanges();
+          progSel.addRange(progRange);
+        } catch {
+        }
+      } else {
+        placeTextCaretFromPoint(target, e.clientX, e.clientY);
+      }
     }
     shieldOverlay.addEventListener("dblclick", beginTextEditingFromEvent, true);
     selectionOverlay.addEventListener(

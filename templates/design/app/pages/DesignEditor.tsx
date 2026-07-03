@@ -2369,7 +2369,12 @@ function appendCanvasPrimitiveToHtml(
       return `<!DOCTYPE html>\n${doc.documentElement.outerHTML}`;
     }
 
-    const element = doc.createElement("div");
+    // Text primitives are created as a semantic <p> (a real text tag) rather
+    // than a <div>. The inspector decides "is this text?" from the actual HTML
+    // tag against TEXT_TAGS (p/h1-h6/span/…) — a <div> is not in that set, so a
+    // div-backed text box shows as "div" with no Typography controls (no font
+    // size). Using <p> makes it show as "Text" with the full Typography panel.
+    const element = doc.createElement(primitive.kind === "text" ? "p" : "div");
     element.setAttribute("data-agent-native-node-id", nodeId);
     element.setAttribute("data-agent-native-layer-name", layerName);
     // Kind marker so the layers panel shows a shape/text/frame icon for this
@@ -2404,6 +2409,8 @@ function appendCanvasPrimitiveToHtml(
       element.style.overflow = "hidden";
     } else if (primitive.kind === "text") {
       element.textContent = primitive.text ?? "";
+      // Reset the <p> user-agent margin so it lays out exactly where placed.
+      element.style.margin = "0";
       element.style.display = primitive.autoSize ? "inline-block" : "flex";
       if (!primitive.autoSize) {
         element.style.alignItems = "center";
@@ -2412,8 +2419,8 @@ function appendCanvasPrimitiveToHtml(
       element.style.fontSize = "16px";
       element.style.lineHeight = "1.2";
       element.style.whiteSpace = "pre-wrap";
-      element.style.border = canonical.border;
-      element.style.borderRadius = canonical.borderRadius;
+      // No default border/radius on text — those are shape defaults and show up
+      // as an unwanted stroke on a text box.
     } else if (primitive.kind === "ellipse") {
       element.style.background = primitive.fill ?? canonical.background;
       element.style.border =
@@ -2728,7 +2735,14 @@ function postBeginTextEditToPreviewIframes(
         `[data-agent-native-node-id="${nodeId.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`,
       );
       const editing = doc?.querySelector(selector);
-      if (editing && doc?.activeElement === editing) return "active";
+      // Once an inline edit session exists on the node (the contenteditable
+      // marker is present), stop the retry ladder — even if focus has briefly
+      // moved away. Re-posting begin-text-edit into a live session re-enters the
+      // editor, re-places the caret at the element's right edge, and re-attaches
+      // input listeners, which scrambles/duplicates live keystrokes. The
+      // bridge's own blur handler recovers transient focus loss, so the parent
+      // must not keep poking after editing has begun.
+      if (editing) return "active";
       if (node && (node.textContent ?? "").trim().length > 0) return "done";
     } catch {
       // Keep retrying other iframes.
@@ -2752,7 +2766,11 @@ function scheduleBeginTextEditForScreen(
   [180, 300, 600, 900, 1200, 1800, 2400, 3200, 4200].forEach((delay) => {
     window.setTimeout(() => {
       if (finished) return;
-      finished = postBeginTextEditToPreviewIframes(screenId, nodeId) === "done";
+      // Latch on BOTH "done" (node already has text) and "active" (an edit
+      // session has begun). The ladder exists only to START editing once the
+      // freshly-created node has mounted in the preview iframe; continuing to
+      // fire after editing began re-enters the editor and corrupts live input.
+      finished = postBeginTextEditToPreviewIframes(screenId, nodeId) !== false;
     }, delay);
   });
 }
@@ -4656,6 +4674,16 @@ export default function DesignEditor() {
     selector?: string;
     hasRange?: boolean;
   }>({ active: false });
+  // Confirmation gate for deleting content-bearing screen frames. Screen
+  // deletion hard-deletes the file server-side and is NOT undoable, so a stray
+  // Delete on a selected frame (e.g. after clicking a tiny/0×0 element that
+  // resolved selection to the whole screen) must be confirmed before it wipes
+  // the screen.
+  const [pendingScreenDeletion, setPendingScreenDeletion] = useState<{
+    ids: string[];
+    count: number;
+    name: string;
+  } | null>(null);
   const [hoveredElement, setHoveredElement] = useState<ElementInfo | null>(
     null,
   );
@@ -12047,7 +12075,7 @@ export default function DesignEditor() {
   }, [handleCopySelection, handleDeleteSelection, selectedElement]);
 
   const handleDeleteOverviewSelection = useCallback(
-    (selectedIds: string[]) => {
+    (selectedIds: string[], opts?: { confirmed?: boolean }) => {
       if (!canEditDesign) return false;
       if (!selectedIds.length || files.length <= 1) return false;
 
@@ -12061,6 +12089,29 @@ export default function DesignEditor() {
           : selectedFiles.length;
       const filesToDelete = selectedFiles.slice(0, maxDeleteCount);
       if (!filesToDelete.length) return false;
+
+      // Screen deletion hard-deletes the file (and everything on it) server-side
+      // and cannot be undone. If any target screen has content, confirm first —
+      // this stops a stray Delete on a selected frame from destroying a whole
+      // screen. Empty scratch screens still delete without a prompt.
+      if (!opts?.confirmed) {
+        const contentBearing = filesToDelete.filter((file) => {
+          const html = getScreenContent(file.id) ?? file.content ?? "";
+          try {
+            return buildCodeLayerProjection(html).nodes.length > 0;
+          } catch {
+            return html.trim().length > 0;
+          }
+        });
+        if (contentBearing.length > 0) {
+          setPendingScreenDeletion({
+            ids: filesToDelete.map((file) => file.id),
+            count: filesToDelete.length,
+            name: (filesToDelete[0]?.filename ?? "").replace(/\.[^.]+$/, ""),
+          });
+          return false;
+        }
+      }
 
       const deleteIds = new Set(filesToDelete.map((file) => file.id));
       const nextActiveFile = files.find((file) => !deleteIds.has(file.id));
@@ -12199,6 +12250,7 @@ export default function DesignEditor() {
       canvasFrameGeometryById,
       deleteFileMutation,
       files,
+      getScreenContent,
       id,
       queryClient,
       syncUndoRedoState,
@@ -12206,6 +12258,16 @@ export default function DesignEditor() {
       writeFrameGeometrySnapshot,
     ],
   );
+
+  // Confirmed path for the screen-deletion dialog: re-runs the delete with the
+  // confirmation gate bypassed.
+  const confirmPendingScreenDeletion = useCallback(() => {
+    const pending = pendingScreenDeletion;
+    setPendingScreenDeletion(null);
+    if (pending && pending.ids.length > 0) {
+      handleDeleteOverviewSelection(pending.ids, { confirmed: true });
+    }
+  }, [handleDeleteOverviewSelection, pendingScreenDeletion]);
 
   const handleCopyProps = useCallback(() => {
     if (!selectedElement) return;
@@ -18068,6 +18130,45 @@ ${serializedHtml}
               onClick={handleDiscardPendingVisualStylesAndNavigate}
             >
               {t("designEditor.pendingVisualStyles.leave")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={pendingScreenDeletion !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingScreenDeletion(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {(pendingScreenDeletion?.count ?? 0) === 1
+                ? t("designEditor.confirmDeleteScreen.titleOne")
+                : t("designEditor.confirmDeleteScreen.titleOther", {
+                    count: pendingScreenDeletion?.count ?? 0,
+                  })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {(pendingScreenDeletion?.count ?? 0) === 1
+                ? t("designEditor.confirmDeleteScreen.descriptionOne", {
+                    name: pendingScreenDeletion?.name || "This screen",
+                  })
+                : t("designEditor.confirmDeleteScreen.descriptionOther", {
+                    count: pendingScreenDeletion?.count ?? 0,
+                  })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setPendingScreenDeletion(null)}>
+              {t("designEditor.confirmDeleteScreen.cancel")}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={confirmPendingScreenDeletion}
+            >
+              {t("designEditor.confirmDeleteScreen.confirm")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

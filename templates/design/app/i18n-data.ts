@@ -481,6 +481,16 @@ const enUS = {
       stay: "Stay here",
       leave: "Leave without applying",
     },
+    confirmDeleteScreen: {
+      titleOne: "Delete this screen?",
+      titleOther: "Delete {{count}} screens?",
+      descriptionOne:
+        "“{{name}}” and everything on it will be removed. This can't be undone.",
+      descriptionOther:
+        "These {{count}} screens and everything on them will be removed. This can't be undone.",
+      cancel: "Cancel",
+      confirm: "Delete screen",
+    },
     capabilities: {
       "deterministic-style-edit": "Safe style edit",
       "deterministic-class-edit": "Safe class edit",

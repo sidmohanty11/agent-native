@@ -2903,37 +2903,58 @@ export function MultiScreenCanvas({
     ],
   );
 
+  const retryInFlightRef = useRef(false);
   const retryPersistedDraftPrimitives = useCallback(() => {
+    // Re-entrancy guard. This runs from the passive effect below and calls
+    // onCreatePrimitive (mutates file content) + onPrimitiveCreated (which does
+    // a flushSync). A flushSync during the effect flush can synchronously
+    // re-fire this effect BEFORE the draft-removal setState has been applied to
+    // draftPrimitivesRef (updateDraftPrimitives only updates the ref inside its
+    // async setState updater). Without this guard the same draft is persisted
+    // over and over — the frame keeps growing, text piles up at the bottom, and
+    // React eventually aborts with "Maximum update depth exceeded". The guard
+    // ensures each parked draft is persisted exactly once per settle.
+    if (retryInFlightRef.current) return;
     const drafts = draftPrimitivesRef.current;
     if (drafts.length === 0 || !onCreatePrimitive) return;
+    retryInFlightRef.current = true;
+    try {
+      const persistedByDraftId = new Map<string, PersistedDraftPrimitive>();
+      drafts.forEach((draft) => {
+        const persisted = persistDraftPrimitive(draft);
+        if (persisted) persistedByDraftId.set(draft.id, persisted);
+      });
+      if (persistedByDraftId.size === 0) return;
 
-    const persistedByDraftId = new Map<string, PersistedDraftPrimitive>();
-    drafts.forEach((draft) => {
-      const persisted = persistDraftPrimitive(draft);
-      if (persisted) persistedByDraftId.set(draft.id, persisted);
-    });
-    if (persistedByDraftId.size === 0) return;
+      const selectedDraftIds = selectedDraftIdsRef.current;
+      // Clear persisted drafts from the ref synchronously (not only via the
+      // async setState), so a re-fire before the state flush also sees them
+      // gone and bails on the length check above.
+      draftPrimitivesRef.current = draftPrimitivesRef.current.filter(
+        (draft) => !persistedByDraftId.has(draft.id),
+      );
+      updateDraftPrimitives((current) =>
+        current.filter((draft) => !persistedByDraftId.has(draft.id)),
+      );
+      updateSelectedDraftIds((current) =>
+        current.filter((id) => !persistedByDraftId.has(id)),
+      );
+      updateSelectedIds(() => []);
 
-    const selectedDraftIds = selectedDraftIdsRef.current;
-    updateDraftPrimitives((current) =>
-      current.filter((draft) => !persistedByDraftId.has(draft.id)),
-    );
-    updateSelectedDraftIds((current) =>
-      current.filter((id) => !persistedByDraftId.has(id)),
-    );
-    updateSelectedIds(() => []);
-
-    const selectedPersisted = selectedDraftIds
-      .map((id) => persistedByDraftId.get(id))
-      .filter((entry): entry is PersistedDraftPrimitive => Boolean(entry));
-    const persistedEntries =
-      selectedPersisted.length > 0
-        ? selectedPersisted
-        : Array.from(persistedByDraftId.values());
-    const lastPersisted = persistedEntries[persistedEntries.length - 1];
-    // Do not call onPrimitiveCreated for board objects (sentinel frameId).
-    if (lastPersisted && lastPersisted.frameId !== "__board__") {
-      onPrimitiveCreated?.(lastPersisted.frameId, lastPersisted.nodeId);
+      const selectedPersisted = selectedDraftIds
+        .map((id) => persistedByDraftId.get(id))
+        .filter((entry): entry is PersistedDraftPrimitive => Boolean(entry));
+      const persistedEntries =
+        selectedPersisted.length > 0
+          ? selectedPersisted
+          : Array.from(persistedByDraftId.values());
+      const lastPersisted = persistedEntries[persistedEntries.length - 1];
+      // Do not call onPrimitiveCreated for board objects (sentinel frameId).
+      if (lastPersisted && lastPersisted.frameId !== "__board__") {
+        onPrimitiveCreated?.(lastPersisted.frameId, lastPersisted.nodeId);
+      }
+    } finally {
+      retryInFlightRef.current = false;
     }
   }, [
     onCreatePrimitive,
