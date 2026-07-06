@@ -12,6 +12,7 @@
 @import "@agent-native/core/styles/agent-native.css";
 
 @source "./**/*.{ts,tsx}";
+@source "../node_modules/@agent-native/toolkit/dist/**/*.js";
 
 /* Hide the sidebar's built-in collapsed tab strip — AgentToggleButton in the
    toolbar serves this purpose instead, so we don't want a redundant bar. */
