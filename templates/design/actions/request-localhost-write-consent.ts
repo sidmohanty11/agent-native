@@ -1,5 +1,8 @@
 import { defineAction } from "@agent-native/core";
-import { writeAppState } from "@agent-native/core/application-state";
+import {
+  readAppStateForCurrentTab,
+  writeAppState,
+} from "@agent-native/core/application-state";
 import { getRequestUserEmail } from "@agent-native/core/server/request-context";
 import { assertAccess } from "@agent-native/core/sharing";
 import { and, eq } from "drizzle-orm";
@@ -40,7 +43,10 @@ export default defineAction({
 
     const db = getDb();
     const [connection] = await db
-      .select({ rootPath: schema.designLocalhostConnections.rootPath })
+      .select({
+        rootPath: schema.designLocalhostConnections.rootPath,
+        bridgeToken: schema.designLocalhostConnections.bridgeToken,
+      })
       .from(schema.designLocalhostConnections)
       .where(
         and(
@@ -53,6 +59,17 @@ export default defineAction({
     if (!connection) {
       throw new Error(
         `Localhost connection "${connectionId}" not found for the current user.`,
+      );
+    }
+
+    // Fail fast on the same preconditions grant-localhost-write-consent
+    // enforces, so we never show a dialog that would hard-fail on approval —
+    // or one labeled with the connection id instead of a real folder.
+    if (!connection.rootPath || !connection.bridgeToken) {
+      throw new Error(
+        `Connection "${connectionId}" is not ready for writes (missing root ` +
+          "path or bridge token). Re-run `npx @agent-native/core@latest design " +
+          "connect` so the CLI records both, then retry.",
       );
     }
 
@@ -84,18 +101,41 @@ export default defineAction({
     await writeAppState(`design-localhost-write-consent-request:${designId}`, {
       designId,
       connectionId,
-      rootPath: connection.rootPath ?? connectionId,
+      rootPath: connection.rootPath,
       files: files ?? [],
       requestedAt: new Date().toISOString(),
     });
 
+    // The dialog only renders from this design's editor, so only claim it
+    // surfaced when the user is actually there. Otherwise the request stays
+    // queued and fires when they open the design — report that honestly instead
+    // of implying a dialog is on screen.
+    const navigation = await readAppStateForCurrentTab("navigation").catch(
+      () => null,
+    );
+    const onThisEditor =
+      navigation?.["view"] === "editor" &&
+      navigation?.["designId"] === designId;
+
+    if (onThisEditor) {
+      return {
+        designId,
+        connectionId,
+        surfaced: true,
+        message:
+          "Opened the write-consent dialog. Ask the user to click 'Allow " +
+          "writes', then retry write-local-file.",
+      };
+    }
+
     return {
       designId,
       connectionId,
-      surfaced: true,
+      surfaced: false,
       message:
-        "Prompted the user to allow file writes in the editor. Ask them to " +
-        "click 'Allow writes' in the dialog, then retry write-local-file.",
+        "Queued a write-consent request, but the user is not on this design's " +
+        "editor so no dialog is showing yet. Ask them to open the design; the " +
+        "prompt appears then, and you can retry write-local-file after they approve.",
     };
   },
 });
