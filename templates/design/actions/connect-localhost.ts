@@ -202,7 +202,14 @@ export default defineAction({
       );
     }
 
-    const nextBridgeToken = args.bridgeToken?.trim() || undefined;
+    // Bridge token: caller-provided, else existing (idempotent refresh), else
+    // mint. Minting here — the authenticated action — lets the server own the
+    // secret and return it (below), so the CLI no longer needs its own auth to
+    // self-register the token. That auth gap was the root cause of live-edit 401s.
+    const nextBridgeToken =
+      args.bridgeToken?.trim() ||
+      existing[0]?.bridgeToken ||
+      crypto.randomBytes(32).toString("hex");
     const values = {
       id,
       name: args.name ?? new URL(devServerUrl).host,
@@ -212,7 +219,7 @@ export default defineAction({
       rootPath: routeManifest.rootPath ?? null,
       routeManifest: JSON.stringify(routeManifest),
       capabilities: JSON.stringify(capabilities),
-      bridgeToken: nextBridgeToken ?? existing[0]?.bridgeToken ?? null,
+      bridgeToken: nextBridgeToken,
       status: args.status,
       lastSeenAt: now,
       ownerEmail,
@@ -245,6 +252,9 @@ export default defineAction({
       capabilities,
       status: args.status,
       lastSeenAt: now,
+      // Returned so the caller can start the bridge with
+      // `design connect --bridge-token <this>`, matching this row.
+      bridgeToken: nextBridgeToken,
     };
   },
 });
