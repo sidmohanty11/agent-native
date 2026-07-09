@@ -202,15 +202,14 @@ export default defineAction({
       );
     }
 
-    // Bridge token: caller-provided, else existing (idempotent refresh), else
-    // mint. Minting here — the authenticated action — lets the server own the
-    // secret and return it (below), so the CLI no longer needs its own auth to
-    // self-register the token. That auth gap was the root cause of live-edit 401s.
+    // Token for a new row: explicit, else existing, else mint. The authenticated
+    // action owning the mint is what lets the CLI skip its own auth (the 401 gap).
+    const explicitToken = args.bridgeToken?.trim() || undefined;
     const nextBridgeToken =
-      args.bridgeToken?.trim() ||
+      explicitToken ||
       existing[0]?.bridgeToken ||
       crypto.randomBytes(32).toString("hex");
-    const values = {
+    const baseValues = {
       id,
       name: args.name ?? new URL(devServerUrl).host,
       sourceType: "localhost" as const,
@@ -219,7 +218,6 @@ export default defineAction({
       rootPath: routeManifest.rootPath ?? null,
       routeManifest: JSON.stringify(routeManifest),
       capabilities: JSON.stringify(capabilities),
-      bridgeToken: nextBridgeToken,
       status: args.status,
       lastSeenAt: now,
       ownerEmail,
@@ -227,23 +225,34 @@ export default defineAction({
       updatedAt: now,
     };
 
-    // Atomic upsert keyed on the id primary key — no check-then-insert race.
-    // setWhere keeps a concurrent insert by another user (TOCTOU on the
-    // ownership check above) from being overwritten: on a cross-user conflict
-    // the update filters to a no-op instead of hijacking the other row.
+    // Write-once token: on conflict only overwrite it for an explicit token;
+    // a server-minted one leaves any existing token alone, so concurrent
+    // first-time callers cannot clobber each other (read->mint->write isn't
+    // atomic). setWhere keeps a cross-user conflict a no-op.
     await db
       .insert(schema.designLocalhostConnections)
-      .values({ ...values, createdAt: now })
+      .values({ ...baseValues, bridgeToken: nextBridgeToken, createdAt: now })
       .onConflictDoUpdate({
         target: schema.designLocalhostConnections.id,
-        set: values,
+        set: explicitToken
+          ? { ...baseValues, bridgeToken: nextBridgeToken }
+          : baseValues,
         setWhere: eq(schema.designLocalhostConnections.ownerEmail, ownerEmail),
       });
+
+    // Return the token the row actually holds, not the one we minted, so
+    // concurrent callers converge on the winner (no 401 on a lost race).
+    const [stored] = await db
+      .select({ bridgeToken: schema.designLocalhostConnections.bridgeToken })
+      .from(schema.designLocalhostConnections)
+      .where(eq(schema.designLocalhostConnections.id, id))
+      .limit(1);
+    const effectiveBridgeToken = stored?.bridgeToken ?? nextBridgeToken;
 
     return {
       id,
       sourceType: "localhost",
-      name: values.name,
+      name: baseValues.name,
       devServerUrl,
       bridgeUrl: bridgeUrl ?? null,
       rootPath: routeManifest.rootPath ?? null,
@@ -254,7 +263,7 @@ export default defineAction({
       lastSeenAt: now,
       // Returned so the caller can start the bridge with
       // `design connect --bridge-token <this>`, matching this row.
-      bridgeToken: nextBridgeToken,
+      bridgeToken: effectiveBridgeToken,
     };
   },
 });
