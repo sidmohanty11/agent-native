@@ -3594,17 +3594,16 @@ declare var __RUNTIME_LAYER_SNAPSHOT_ENABLED__: boolean;
     el: Element,
   ): boolean {
     var elCs = window.getComputedStyle(el);
-    var elLeft = readFinitePx(el.style.left || elCs.left);
-    var elTop = readFinitePx(el.style.top || elCs.top);
-    var elW = readFinitePx(el.style.width || elCs.width);
-    var elH = readFinitePx(el.style.height || elCs.height);
+    var htmlEl = el instanceof HTMLElement ? el : null;
+    var elLeft = htmlEl ? htmlEl.offsetLeft : readFinitePx((el as HTMLElement).style.left || elCs.left);
+    var elTop = htmlEl ? htmlEl.offsetTop : readFinitePx((el as HTMLElement).style.top || elCs.top);
+    var elW = htmlEl ? htmlEl.offsetWidth : readFinitePx((el as HTMLElement).style.width || elCs.width);
+    var elH = htmlEl ? htmlEl.offsetHeight : readFinitePx((el as HTMLElement).style.height || elCs.height);
     var elRot = currentRotation(el);
     var canUseLocalBox =
       Math.abs(elRot) > 0.01 &&
-      elLeft !== null &&
-      elTop !== null &&
-      elW !== null &&
-      elH !== null;
+      (htmlEl !== null ||
+        (elLeft !== null && elTop !== null && elW !== null && elH !== null));
     if (!canUseLocalBox) return false;
     // Convert element-local left/top to viewport coords by walking to the
     // nearest positioned ancestor (same reference frame as getBoundingClientRect).
@@ -3617,7 +3616,7 @@ declare var __RUNTIME_LAYER_SNAPSHOT_ENABLED__: boolean;
     overlay.style.width = elW + "px";
     overlay.style.height = elH + "px";
     overlay.style.transform = "rotate(" + elRot + "deg)";
-    overlay.style.transformOrigin = "0 0";
+    overlay.style.transformOrigin = "center center";
     return true;
   }
 
@@ -5360,32 +5359,66 @@ declare var __RUNTIME_LAYER_SNAPSHOT_ENABLED__: boolean;
     },
   );
 
-  function currentRotation(el) {
-    var transform =
-      el.style.transform || window.getComputedStyle(el).transform || "";
-    var match = transform.match(/rotate\((-?\d+(?:\.\d+)?)deg\)/);
+  function rotationFromTransform(transform) {
+    var match = transform.match(/rotate(?:Z)?\((-?\d+(?:\.\d+)?)deg\)/i);
     if (match) return parseFloat(match[1]) || 0;
     if (transform && transform !== "none" && window.DOMMatrixReadOnly) {
       try {
         var matrix = new DOMMatrixReadOnly(transform);
-        return Math.round((Math.atan2(matrix.b, matrix.a) * 180) / Math.PI);
+        return (Math.atan2(matrix.b, matrix.a) * 180) / Math.PI;
       } catch (err) {}
     }
     return 0;
   }
 
-  function mergeRotation(el, degrees) {
-    var inline = el.style.transform || "";
-    var next = inline.match(/rotate\((-?\d+(?:\.\d+)?)deg\)/)
-      ? inline.replace(
-          /rotate\((-?\d+(?:\.\d+)?)deg\)/,
-          "rotate(" + degrees + "deg)",
-        )
-      : (inline && inline !== "none" ? inline + " " : "") +
-        "rotate(" +
-        degrees +
-        "deg)";
-    return next.trim();
+  function independentRotation(rotate) {
+    var match = rotate.match(
+      /^(?:z\s+)?(-?\d+(?:\.\d+)?)(deg|grad|rad|turn)$/i,
+    );
+    if (!match) return 0;
+    var value = parseFloat(match[1]) || 0;
+    var unit = match[2].toLowerCase();
+    if (unit === "grad") return value * 0.9;
+    if (unit === "rad") return (value * 180) / Math.PI;
+    if (unit === "turn") return value * 360;
+    return value;
+  }
+
+  function currentRotation(el) {
+    var computed = window.getComputedStyle(el);
+    return (
+      rotationFromTransform(computed.transform || "") +
+      independentRotation(computed.rotate || "")
+    );
+  }
+
+  // Merge an ABSOLUTE rotation value (degrees) into a transform string.
+  // When the string already has a rotate/rotateZ(), replace it in place.
+  // When the transform is a matrix() (e.g. computed from a class rule), strip
+  // the rotation component and append the new absolute rotate() so the inline
+  // value only adds what the class doesn't already own as non-rotation parts.
+  // When the string has non-rotation functions (translate, scale, etc.) without
+  // an explicit rotate(), append rotate() so other transforms are preserved.
+  function mergeAbsoluteRotation(transform, degrees) {
+    var rotatePattern = /rotate(?:Z)?\((-?\d+(?:\.\d+)?)deg\)/i;
+    if (rotatePattern.test(transform)) {
+      return transform
+        .replace(rotatePattern, "rotate(" + degrees + "deg)")
+        .trim();
+    }
+    // matrix() is the computed form of a class-rule transform; writing it
+    // inline would hard-pin every property from that rule. Instead start fresh
+    // with just the target rotation so the class still owns everything else.
+    if (/^matrix(?:3d)?\(/i.test(transform.trim())) {
+      return "rotate(" + degrees + "deg)";
+    }
+    // transform string with other functions but no existing rotate: append.
+    return (
+      (transform && transform !== "none" ? transform + " " : "") +
+      "rotate(" +
+      degrees +
+      "deg)"
+    ).trim();
   }
 
   function ensurePositionable(el) {
@@ -8690,6 +8723,11 @@ declare var __RUNTIME_LAYER_SNAPSHOT_ENABLED__: boolean;
     // null-deref in onMove/onUp.
     var rotateEl = selectedEl;
     var originalInlineTransform = rotateEl.style.transform;
+    var originalComputedTransform = window.getComputedStyle(rotateEl).transform;
+    var baseTransform =
+      originalInlineTransform && originalInlineTransform !== "none"
+        ? originalInlineTransform
+        : originalComputedTransform;
     function onMove(ev) {
       if (!rotateEl) return;
       var pointerAngle =
@@ -8698,7 +8736,7 @@ declare var __RUNTIME_LAYER_SNAPSHOT_ENABLED__: boolean;
       var next = originRotation + pointerAngle - originAngle;
       if (ev.shiftKey) next = Math.round(next / 15) * 15;
       next = Math.round(next);
-      rotateEl.style.transform = mergeRotation(rotateEl, next);
+      rotateEl.style.transform = mergeAbsoluteRotation(baseTransform, next);
       showTransformBadge(next + "deg", ev.clientX, ev.clientY);
       refreshOverlays();
     }

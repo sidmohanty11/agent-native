@@ -2425,12 +2425,13 @@ export const editorChromeBridgeScript: string = `"use strict";
     }
     function positionOverlayForRotatedLocalBox(overlay, el) {
       var elCs = window.getComputedStyle(el);
-      var elLeft = readFinitePx(el.style.left || elCs.left);
-      var elTop = readFinitePx(el.style.top || elCs.top);
-      var elW = readFinitePx(el.style.width || elCs.width);
-      var elH = readFinitePx(el.style.height || elCs.height);
+      var htmlEl = el instanceof HTMLElement ? el : null;
+      var elLeft = htmlEl ? htmlEl.offsetLeft : readFinitePx(el.style.left || elCs.left);
+      var elTop = htmlEl ? htmlEl.offsetTop : readFinitePx(el.style.top || elCs.top);
+      var elW = htmlEl ? htmlEl.offsetWidth : readFinitePx(el.style.width || elCs.width);
+      var elH = htmlEl ? htmlEl.offsetHeight : readFinitePx(el.style.height || elCs.height);
       var elRot = currentRotation(el);
-      var canUseLocalBox = Math.abs(elRot) > 0.01 && elLeft !== null && elTop !== null && elW !== null && elH !== null;
+      var canUseLocalBox = Math.abs(elRot) > 0.01 && (htmlEl !== null || elLeft !== null && elTop !== null && elW !== null && elH !== null);
       if (!canUseLocalBox) return false;
       var parentRect = (el.offsetParent || document.documentElement).getBoundingClientRect();
       overlay.style.display = "block";
@@ -2439,7 +2440,7 @@ export const editorChromeBridgeScript: string = `"use strict";
       overlay.style.width = elW + "px";
       overlay.style.height = elH + "px";
       overlay.style.transform = "rotate(" + elRot + "deg)";
-      overlay.style.transformOrigin = "0 0";
+      overlay.style.transformOrigin = "center center";
       return true;
     }
     function positionOverlay(overlay, el) {
@@ -3683,26 +3684,43 @@ export const editorChromeBridgeScript: string = `"use strict";
         beginGradientDrag(ev, { kind: "endpoint", which: "end" });
       }
     );
-    function currentRotation(el) {
-      var transform = el.style.transform || window.getComputedStyle(el).transform || "";
-      var match = transform.match(/rotate\\((-?\\d+(?:\\.\\d+)?)deg\\)/);
+    function rotationFromTransform(transform) {
+      var match = transform.match(/rotate(?:Z)?\\((-?\\d+(?:\\.\\d+)?)deg\\)/i);
       if (match) return parseFloat(match[1]) || 0;
       if (transform && transform !== "none" && window.DOMMatrixReadOnly) {
         try {
           var matrix = new DOMMatrixReadOnly(transform);
-          return Math.round(Math.atan2(matrix.b, matrix.a) * 180 / Math.PI);
+          return Math.atan2(matrix.b, matrix.a) * 180 / Math.PI;
         } catch (err) {
         }
       }
       return 0;
     }
-    function mergeRotation(el, degrees) {
-      var inline = el.style.transform || "";
-      var next = inline.match(/rotate\\((-?\\d+(?:\\.\\d+)?)deg\\)/) ? inline.replace(
-        /rotate\\((-?\\d+(?:\\.\\d+)?)deg\\)/,
-        "rotate(" + degrees + "deg)"
-      ) : (inline && inline !== "none" ? inline + " " : "") + "rotate(" + degrees + "deg)";
-      return next.trim();
+    function independentRotation(rotate) {
+      var match = rotate.match(
+        /^(?:z\\s+)?(-?\\d+(?:\\.\\d+)?)(deg|grad|rad|turn)$/i
+      );
+      if (!match) return 0;
+      var value = parseFloat(match[1]) || 0;
+      var unit = match[2].toLowerCase();
+      if (unit === "grad") return value * 0.9;
+      if (unit === "rad") return value * 180 / Math.PI;
+      if (unit === "turn") return value * 360;
+      return value;
+    }
+    function currentRotation(el) {
+      var computed = window.getComputedStyle(el);
+      return rotationFromTransform(computed.transform || "") + independentRotation(computed.rotate || "");
+    }
+    function mergeAbsoluteRotation(transform, degrees) {
+      var rotatePattern = /rotate(?:Z)?\\((-?\\d+(?:\\.\\d+)?)deg\\)/i;
+      if (rotatePattern.test(transform)) {
+        return transform.replace(rotatePattern, "rotate(" + degrees + "deg)").trim();
+      }
+      if (/^matrix(?:3d)?\\(/i.test(transform.trim())) {
+        return "rotate(" + degrees + "deg)";
+      }
+      return ((transform && transform !== "none" ? transform + " " : "") + "rotate(" + degrees + "deg)").trim();
     }
     function ensurePositionable(el) {
       var cs = window.getComputedStyle(el);
@@ -5824,13 +5842,15 @@ export const editorChromeBridgeScript: string = `"use strict";
       var originRotation = currentRotation(selectedEl);
       var rotateEl = selectedEl;
       var originalInlineTransform = rotateEl.style.transform;
+      var originalComputedTransform = window.getComputedStyle(rotateEl).transform;
+      var baseTransform = originalInlineTransform && originalInlineTransform !== "none" ? originalInlineTransform : originalComputedTransform;
       function onMove(ev) {
         if (!rotateEl) return;
         var pointerAngle = Math.atan2(ev.clientY - center.y, ev.clientX - center.x) * 180 / Math.PI;
         var next = originRotation + pointerAngle - originAngle;
         if (ev.shiftKey) next = Math.round(next / 15) * 15;
         next = Math.round(next);
-        rotateEl.style.transform = mergeRotation(rotateEl, next);
+        rotateEl.style.transform = mergeAbsoluteRotation(baseTransform, next);
         showTransformBadge(next + "deg", ev.clientX, ev.clientY);
         refreshOverlays();
       }
