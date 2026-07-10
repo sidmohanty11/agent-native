@@ -1204,7 +1204,10 @@ export const editorChromeBridgeScript: string = `"use strict";
     document.body.appendChild(snapGuideH);
     var measurementOverlay = document.createElement("div");
     measurementOverlay.setAttribute("data-agent-native-measurement-overlay", "");
-    measurementOverlay.setAttribute("data-agent-native-edit-overlay", "measurement");
+    measurementOverlay.setAttribute(
+      "data-agent-native-edit-overlay",
+      "measurement"
+    );
     measurementOverlay.style.cssText = "position:fixed;inset:0;z-index:100001;display:none;pointer-events:none;color:var(--design-editor-measure-color);font:11px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;";
     document.body.appendChild(measurementOverlay);
     var componentTagOverlay = document.createElement("div");
