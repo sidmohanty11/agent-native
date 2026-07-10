@@ -3878,7 +3878,9 @@ it(
       // Use the nw rotate handle bounding box to drive the drag from Playwright
       // so mouse.down/move/up are all in the same event stream (mirrors the
       // resize-handle tests above).
-      const nwHandle = page.locator('[data-agent-native-rotate-handle="nw"]').first();
+      const nwHandle = page
+        .locator('[data-agent-native-rotate-handle="nw"]')
+        .first();
       const handleBox = await nwHandle.boundingBox();
       if (!handleBox) throw new Error("nw rotate handle not visible");
 

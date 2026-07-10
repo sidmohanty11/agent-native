@@ -1583,13 +1583,17 @@ declare var __RUNTIME_LAYER_SNAPSHOT_ENABLED__: boolean;
     function rotateCursorUri(angleDeg) {
       var svg =
         '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20">' +
-        '<g transform="rotate(' + angleDeg + ' 10 10)" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">' +
+        '<g transform="rotate(' +
+        angleDeg +
+        ' 10 10)" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">' +
         '<path d="M 4 8 A 7 7 0 0 1 16 8" stroke="white" stroke-width="3.5"/>' +
         '<path d="M 4 8 A 7 7 0 0 1 16 8"/>' +
         '<path d="M 12.5 3.5 L 16 8 L 11 8.5" fill="white" stroke="white" stroke-width="3.5" stroke-linejoin="round"/>' +
         '<path d="M 12.5 3.5 L 16 8 L 11 8.5" fill="black"/>' +
         "</g></svg>";
-      return 'url("data:image/svg+xml,' + encodeURIComponent(svg) + '") 10 10, grab';
+      return (
+        'url("data:image/svg+xml,' + encodeURIComponent(svg) + '") 10 10, grab'
+      );
     }
     ["nw", "ne", "se", "sw"].forEach(function (pos) {
       var handle = document.createElement("span");
