@@ -3850,6 +3850,29 @@ it(
         return !!overlay && overlay.style.display === "block";
       });
 
+      const rotationChrome = await page.evaluate(() => {
+        const overlay = document.querySelector<HTMLElement>(
+          '[data-agent-native-edit-overlay="selection"]',
+        )!;
+        const button = overlay.querySelector<HTMLElement>(
+          '[data-agent-native-rotate-handle="top-center"]',
+        )!;
+        return {
+          buttonSize: parseFloat(button.style.width),
+          left: parseFloat(overlay.style.left),
+          top: parseFloat(overlay.style.top),
+          width: parseFloat(overlay.style.width),
+          height: parseFloat(overlay.style.height),
+        };
+      });
+      expect(rotationChrome).toEqual({
+        buttonSize: 16,
+        left: 200,
+        top: 200,
+        width: 100,
+        height: 100,
+      });
+
       await collectBridgeMessages(page);
 
       // Use the nw rotate handle bounding box to drive the drag from Playwright
