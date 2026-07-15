@@ -16,6 +16,13 @@ export const editorChromeBridgeScript: string = `"use strict";
     var designCanvasContentOffsetX = Number(__DESIGN_CANVAS_CONTENT_OFFSET_X__) || 0;
     var designCanvasContentOffsetY = Number(__DESIGN_CANVAS_CONTENT_OFFSET_Y__) || 0;
     var runtimeLayerSnapshotEnabled = !!__RUNTIME_LAYER_SNAPSHOT_ENABLED__;
+    var liveReflowEnabled = (function() {
+      try {
+        return !!__LIVE_REFLOW_ENABLED__;
+      } catch (_e) {
+        return false;
+      }
+    })();
     var scaleToolEnabled = false;
     var statePreviewElement = null;
     var runtimeInteractionStatePreviews = [];
@@ -5441,11 +5448,210 @@ export const editorChromeBridgeScript: string = `"use strict";
         return;
       }
       if (isFlowReorderCandidate(gestureEl)) {
-        let onReorderMove2 = function(ev) {
+        let applyReorderLift2 = function(dx, dy) {
+          if (!liveReflowEnabled) return;
+          groupEls.forEach(function(member) {
+            var el = member;
+            var snap = reorderLiftedMembers.filter(function(s) {
+              return s.el === el;
+            })[0];
+            if (!snap) {
+              snap = {
+                el,
+                prevTransform: el.style.transform,
+                prevTransition: el.style.transition,
+                prevZIndex: el.style.zIndex,
+                prevBoxShadow: el.style.boxShadow,
+                prevWillChange: el.style.willChange,
+                prevPointerEvents: el.style.pointerEvents
+              };
+              reorderLiftedMembers.push(snap);
+              el.style.transition = "none";
+              el.style.willChange = "transform";
+              el.style.zIndex = "2147483646";
+              el.style.boxShadow = "0 8px 24px rgba(0, 0, 0, 0.18)";
+              el.style.pointerEvents = "none";
+            }
+            var base = snap.prevTransform ? snap.prevTransform + " " : "";
+            el.style.transform = base + "translate(" + dx + "px, " + dy + "px)";
+          });
+        }, clearReorderLift2 = function() {
+          reorderLiftedMembers.forEach(function(snap) {
+            var el = snap.el;
+            el.style.transform = snap.prevTransform;
+            el.style.transition = snap.prevTransition;
+            el.style.zIndex = snap.prevZIndex;
+            el.style.boxShadow = snap.prevBoxShadow;
+            el.style.willChange = snap.prevWillChange;
+            el.style.pointerEvents = snap.prevPointerEvents;
+          });
+          reorderLiftedMembers = [];
+        }, reorderMainAxis2 = function(target) {
+          return target && target.axis === "y" ? "y" : "x";
+        }, reorderRealChildren2 = function(container) {
+          var out = [];
+          var kids = container.children;
+          for (var i = 0; i < kids.length; i += 1) {
+            var k = kids[i];
+            if (k.nodeType === 1 && !isOverlayElement(k)) out.push(k);
+          }
+          return out;
+        }, reorderSlotForTarget2 = function(target, real) {
+          if (target.placement === "inside") {
+            return { slot: real.length, boundary: null };
+          }
+          var ai = real.indexOf(target.anchor);
+          if (ai < 0) return null;
+          var rect = target.anchor.getBoundingClientRect();
+          var axis = reorderMainAxis2(target);
+          if (target.placement === "before") {
+            return { slot: ai, boundary: axis === "x" ? rect.left : rect.top };
+          }
+          return {
+            slot: ai + 1,
+            boundary: axis === "x" ? rect.right : rect.bottom
+          };
+        }, containerIsSimplePacked2 = function(container) {
+          if (packedCacheContainer === container) return packedCacheResult;
+          packedCacheContainer = container;
+          packedCacheResult = false;
+          var cs = window.getComputedStyle(container);
+          if (cs.display !== "flex" && cs.display !== "inline-flex") return false;
+          if (cs.flexDirection !== "row" && cs.flexDirection !== "column") {
+            return false;
+          }
+          if (cs.flexWrap !== "nowrap") return false;
+          var jc = cs.justifyContent;
+          if (jc !== "flex-start" && jc !== "start" && jc !== "normal" && jc !== "left" && jc !== "") {
+            return false;
+          }
+          var kids = container.children;
+          for (var i = 0; i < kids.length; i += 1) {
+            if (kids[i].nodeType !== 1) continue;
+            if (parseFloat(window.getComputedStyle(kids[i]).flexGrow) > 0) {
+              return false;
+            }
+          }
+          packedCacheResult = true;
+          return true;
+        }, reorderMainGap2 = function(container, axis) {
+          var cs = window.getComputedStyle(container);
+          var raw = axis === "x" ? cs.columnGap || cs.gap : cs.rowGap || cs.gap;
+          var n = readPx(raw);
+          return Number.isFinite(n) && n > 0 ? n : 0;
+        }, clearReorderReflow2 = function() {
+          reflowSiblings.forEach(function(s) {
+            s.el.style.transform = s.prevTransform;
+            s.el.style.transition = s.prevTransition;
+          });
+          reflowSiblings = [];
+          reflowKey = null;
+        }, applyReorderSizeGuard2 = function(target, ev) {
+          if (!liveReflowEnabled || !target || target.placement !== "inside") {
+            return target;
+          }
+          if (ev && (ev.metaKey || ev.ctrlKey)) return target;
+          var container = dropContainerForTarget(target);
+          if (!container || container === reorderEl) return target;
+          var crect = container.getBoundingClientRect();
+          var drect = reorderEl.getBoundingClientRect();
+          if (crect.width < drect.width || crect.height < drect.height) {
+            return null;
+          }
+          return target;
+        }, stabilizeReorderTarget2 = function(rawTarget, cx, cy, now) {
+          if (!liveReflowEnabled || !rawTarget || rawTarget.dropMode !== "flow-insert") {
+            reorderCommittedTarget = null;
+            reorderCommittedSlot = null;
+            return rawTarget;
+          }
+          var container = dropContainerForTarget(rawTarget);
+          if (!container || reorderEl.parentElement !== container) {
+            reorderCommittedTarget = null;
+            reorderCommittedSlot = null;
+            return rawTarget;
+          }
+          var real = reorderRealChildren2(container);
+          var slotInfo = reorderSlotForTarget2(rawTarget, real);
+          if (!slotInfo) {
+            reorderCommittedTarget = null;
+            reorderCommittedSlot = null;
+            return rawTarget;
+          }
+          var axis = reorderMainAxis2(rawTarget);
+          var pointerMain = axis === "x" ? cx : cy;
+          if (reorderCommittedSlot === null || slotInfo.slot === reorderCommittedSlot) {
+            reorderCommittedSlot = slotInfo.slot;
+            reorderCommittedTarget = rawTarget;
+            if (reorderCommittedAt === 0) reorderCommittedAt = now;
+            return rawTarget;
+          }
+          var crossed = slotInfo.boundary !== null && Math.abs(pointerMain - slotInfo.boundary) >= 8;
+          var dwelled = now - reorderCommittedAt >= 60;
+          if (crossed || dwelled) {
+            reorderCommittedSlot = slotInfo.slot;
+            reorderCommittedTarget = rawTarget;
+            reorderCommittedAt = now;
+            return rawTarget;
+          }
+          return reorderCommittedTarget || rawTarget;
+        }, applyReorderReflow2 = function(target, cx, cy) {
+          if (!liveReflowEnabled) return;
+          if (!target || target.dropMode !== "flow-insert") {
+            clearReorderReflow2();
+            return;
+          }
+          var container = dropContainerForTarget(target);
+          if (!container || reorderEl.parentElement !== container || !containerIsSimplePacked2(container)) {
+            clearReorderReflow2();
+            return;
+          }
+          var real = reorderRealChildren2(container);
+          var originIndex = real.indexOf(reorderEl);
+          var slotInfo = reorderSlotForTarget2(target, real);
+          if (originIndex < 0 || !slotInfo) {
+            clearReorderReflow2();
+            return;
+          }
+          var axis = reorderMainAxis2(target);
+          var key = axis + ":" + slotInfo.slot;
+          if (key === reflowKey) return;
+          clearReorderReflow2();
+          reflowKey = key;
+          var drect = reorderEl.getBoundingClientRect();
+          var slotMain = (axis === "x" ? drect.width : drect.height) + reorderMainGap2(container, axis);
+          var offsets = new Array(real.length).fill(0);
+          if (slotInfo.slot > originIndex + 1) {
+            for (var a = originIndex + 1; a <= slotInfo.slot - 1; a += 1) {
+              offsets[a] = -slotMain;
+            }
+          } else if (slotInfo.slot < originIndex) {
+            for (var b = slotInfo.slot; b <= originIndex - 1; b += 1) {
+              offsets[b] = slotMain;
+            }
+          }
+          for (var i = 0; i < real.length; i += 1) {
+            if (i === originIndex) continue;
+            var el = real[i];
+            var prevTransform = el.style.transform;
+            reflowSiblings.push({
+              el,
+              prevTransform,
+              prevTransition: el.style.transition
+            });
+            el.style.transition = "transform 140ms cubic-bezier(0.2, 0, 0, 1)";
+            var base = prevTransform ? prevTransform + " " : "";
+            var tx = axis === "x" ? offsets[i] : 0;
+            var ty = axis === "y" ? offsets[i] : 0;
+            el.style.transform = base + "translate(" + tx + "px, " + ty + "px)";
+          }
+        }, onReorderMove2 = function(ev) {
           var vw = window.innerWidth;
           var vh = window.innerHeight;
           var cx = ev.clientX;
           var cy = ev.clientY;
+          var dx = cx - reorderPointerStart.clientX;
+          var dy = cy - reorderPointerStart.clientY;
           var outside = cx < 0 || cy < 0 || cx > vw || cy > vh;
           pointerOutsideIframe = outside;
           if (!isGroupDrag) {
@@ -5467,9 +5673,11 @@ export const editorChromeBridgeScript: string = `"use strict";
           }
           if (outside && !isGroupDrag) {
             hideInsertionGuide();
+            clearReorderLift2();
+            clearReorderReflow2();
             showTransformBadge("Move layer", cx, cy);
           } else {
-            currentTarget = flowMoveTargetForPoint(
+            var rawTarget = flowMoveTargetForPoint(
               reorderEl,
               cx,
               cy,
@@ -5477,7 +5685,16 @@ export const editorChromeBridgeScript: string = `"use strict";
               keepCurrentFlowParent,
               Boolean(ev.ctrlKey)
             );
+            rawTarget = applyReorderSizeGuard2(rawTarget, ev);
+            currentTarget = stabilizeReorderTarget2(
+              rawTarget,
+              cx,
+              cy,
+              ev.timeStamp
+            );
             showInsertionGuideFor(currentTarget);
+            applyReorderLift2(dx, dy);
+            applyReorderReflow2(currentTarget, cx, cy);
             showTransformBadge(currentTarget ? "Move layer" : "Move", cx, cy);
           }
         }, cleanupReorderDrag2 = function() {
@@ -5486,6 +5703,8 @@ export const editorChromeBridgeScript: string = `"use strict";
           document.removeEventListener("keydown", onReorderKeyDown2, true);
           document.removeEventListener("keyup", onReorderKeyUp2, true);
           clearActiveDragCancel(onReorderEscape2);
+          clearReorderLift2();
+          clearReorderReflow2();
         }, onReorderEscape2 = function() {
           cleanupReorderDrag2();
           hideTransformBadge();
@@ -5544,14 +5763,16 @@ export const editorChromeBridgeScript: string = `"use strict";
             );
           }
           if (outsideOnDrop) return;
-          currentTarget = flowMoveTargetForPoint(
-            reorderEl,
-            cx,
-            cy,
-            groupOthers,
-            keepCurrentFlowParent,
-            Boolean(ev?.ctrlKey)
-          );
+          if (!liveReflowEnabled) {
+            currentTarget = flowMoveTargetForPoint(
+              reorderEl,
+              cx,
+              cy,
+              groupOthers,
+              keepCurrentFlowParent,
+              Boolean(ev?.ctrlKey)
+            );
+          }
           if (!currentTarget) {
             if (duplicatedForDrag && reorderEl && reorderEl !== originalSelectedEl) {
               if (reorderEl.parentElement)
@@ -5615,7 +5836,7 @@ export const editorChromeBridgeScript: string = `"use strict";
             });
           }
         };
-        var onReorderMove = onReorderMove2, cleanupReorderDrag = cleanupReorderDrag2, onReorderEscape = onReorderEscape2, onReorderKeyDown = onReorderKeyDown2, onReorderKeyUp = onReorderKeyUp2, onReorderUp = onReorderUp2;
+        var applyReorderLift = applyReorderLift2, clearReorderLift = clearReorderLift2, reorderMainAxis = reorderMainAxis2, reorderRealChildren = reorderRealChildren2, reorderSlotForTarget = reorderSlotForTarget2, containerIsSimplePacked = containerIsSimplePacked2, reorderMainGap = reorderMainGap2, clearReorderReflow = clearReorderReflow2, applyReorderSizeGuard = applyReorderSizeGuard2, stabilizeReorderTarget = stabilizeReorderTarget2, applyReorderReflow = applyReorderReflow2, onReorderMove = onReorderMove2, cleanupReorderDrag = cleanupReorderDrag2, onReorderEscape = onReorderEscape2, onReorderKeyDown = onReorderKeyDown2, onReorderKeyUp = onReorderKeyUp2, onReorderUp = onReorderUp2;
         var reorderEl = gestureEl;
         var reorderGroupStartRects = groupEls.map(function(member) {
           return member.getBoundingClientRect();
@@ -5649,6 +5870,14 @@ export const editorChromeBridgeScript: string = `"use strict";
           x: reorderPointerStart.clientX - reorderRect.left,
           y: reorderPointerStart.clientY - reorderRect.top
         };
+        var reorderLiftedMembers = [];
+        var reorderCommittedTarget = null;
+        var reorderCommittedSlot = null;
+        var reorderCommittedAt = 0;
+        var reflowSiblings = [];
+        var reflowKey = null;
+        var packedCacheContainer = null;
+        var packedCacheResult = false;
         document.addEventListener(events.move, onReorderMove2, true);
         document.addEventListener(events.up, onReorderUp2, true);
         document.addEventListener("keydown", onReorderKeyDown2, true);

@@ -2546,6 +2546,32 @@ describe("U3: local content history fallback mirror", () => {
       }),
     ).toBe(stack);
   });
+
+  it("does NOT coalesce a user-edit mirror across an agent checkpoint (isCheckpoint guard)", () => {
+    // Repro for: AI creates design → user edits → Cmd+Z wipes all AI work.
+    // The agent checkpoint must remain as a distinct undo entry so the first
+    // Cmd+Z reverts only the user edit and a second Cmd+Z reverts the AI work.
+    const checkpoint = {
+      fileId: "a",
+      before: "",
+      after: "<ai-design/>",
+      isCheckpoint: true,
+    };
+    const stack = [checkpoint];
+    const next = mergeLocalContentHistoryFallback(stack, {
+      fileId: "a",
+      before: "<ai-design/>",
+      after: "<ai-design/><user-edit/>",
+    });
+    expect(next).toEqual([
+      checkpoint,
+      {
+        fileId: "a",
+        before: "<ai-design/>",
+        after: "<ai-design/><user-edit/>",
+      },
+    ]);
+  });
 });
 
 // L11: screen rename must preserve the file extension instead of writing the

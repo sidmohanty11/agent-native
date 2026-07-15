@@ -173,6 +173,11 @@ export interface ContentHistoryChange {
   fileId: string;
   before: string;
   after: string;
+  /** Agent-authored replacement checkpoint. Prevents the next user edit's
+   * fallback mirror from coalescing backward through this entry, which would
+   * collapse the agent state out of the undo stack and make a single Cmd+Z
+   * jump past all AI-generated content to the pre-agent baseline. */
+  isCheckpoint?: boolean;
 }
 
 export interface ContentHistoryGroup {
@@ -261,7 +266,12 @@ export function mergeLocalContentHistoryFallback(
 ): ContentHistoryChange[] {
   if (change.before === change.after) return stack;
   const last = stack[stack.length - 1];
-  if (last && last.fileId === change.fileId && last.after === change.before) {
+  if (
+    last &&
+    last.fileId === change.fileId &&
+    last.after === change.before &&
+    !last.isCheckpoint
+  ) {
     return [...stack.slice(0, -1), { ...last, after: change.after }];
   }
   return [...stack.slice(-(MAX_DESIGN_UNDO_STACK - 1)), change];

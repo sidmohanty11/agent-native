@@ -34,6 +34,7 @@ declare var __DESIGN_CANVAS_BOARD_SURFACE__: boolean;
 declare var __DESIGN_CANVAS_CONTENT_OFFSET_X__: number;
 declare var __DESIGN_CANVAS_CONTENT_OFFSET_Y__: number;
 declare var __RUNTIME_LAYER_SNAPSHOT_ENABLED__: boolean;
+declare var __LIVE_REFLOW_ENABLED__: boolean;
 
 (function () {
   // Idempotency guard: replace-document-content / srcdoc rebuilds can end up
@@ -62,6 +63,21 @@ declare var __RUNTIME_LAYER_SNAPSHOT_ENABLED__: boolean;
   var designCanvasContentOffsetY =
     Number(__DESIGN_CANVAS_CONTENT_OFFSET_Y__) || 0;
   var runtimeLayerSnapshotEnabled = !!__RUNTIME_LAYER_SNAPSHOT_ENABLED__;
+  // Figma-parity live-reflow drag (Phase 0 + 1: hysteresis-stabilized target
+  // resolution, size guard, transform lift/follow, live sibling reflow,
+  // exact absolute commit). Gated so it can be flipped off without a revert.
+  // The placeholder is referenced EXACTLY ONCE so the host's single
+  // String.replace fully substitutes it; the try/catch keeps it crash-safe if
+  // an injection site forgets to replace it (an un-replaced identifier read
+  // throws ReferenceError, which we treat as "off") — the behavior is additive
+  // and rolling out incrementally.
+  var liveReflowEnabled = (function () {
+    try {
+      return !!__LIVE_REFLOW_ENABLED__;
+    } catch (_e) {
+      return false;
+    }
+  })();
   var scaleToolEnabled = false;
 
   // Interaction-state forced preview (phase 2 — see shared/interaction-states.ts's
@@ -8251,11 +8267,293 @@ declare var __RUNTIME_LAYER_SNAPSHOT_ENABLED__: boolean;
         x: reorderPointerStart.clientX - reorderRect.left,
         y: reorderPointerStart.clientY - reorderRect.top,
       };
+      // Phase 1.1 — lift & follow (gated by liveReflowEnabled). While dragging
+      // a flow element, translate it (and any group members) to follow the
+      // cursor with a subtle lift, so it moves WITH your hand instead of
+      // sitting frozen under a lonely insertion line. Pure `transform` — no
+      // layout, no reflow — so it never disturbs the slot it will land in, is
+      // trivially reverted, and (being cleared before any pointer-up commit
+      // math) never corrupts a getBoundingClientRect read. Live sibling reflow
+      // (the gap opening around the cursor) is a later phase; this alone turns
+      // the "dead" reorder drag into a live one.
+      var reorderLiftedMembers: {
+        el: HTMLElement;
+        prevTransform: string;
+        prevTransition: string;
+        prevZIndex: string;
+        prevBoxShadow: string;
+        prevWillChange: string;
+        prevPointerEvents: string;
+      }[] = [];
+      function applyReorderLift(dx: number, dy: number): void {
+        if (!liveReflowEnabled) return;
+        groupEls.forEach(function (member) {
+          var el = member as HTMLElement;
+          var snap = reorderLiftedMembers.filter(function (s) {
+            return s.el === el;
+          })[0];
+          if (!snap) {
+            snap = {
+              el: el,
+              prevTransform: el.style.transform,
+              prevTransition: el.style.transition,
+              prevZIndex: el.style.zIndex,
+              prevBoxShadow: el.style.boxShadow,
+              prevWillChange: el.style.willChange,
+              prevPointerEvents: el.style.pointerEvents,
+            };
+            reorderLiftedMembers.push(snap);
+            el.style.transition = "none";
+            el.style.willChange = "transform";
+            el.style.zIndex = "2147483646";
+            el.style.boxShadow = "0 8px 24px rgba(0, 0, 0, 0.18)";
+            // Hit-test through the lifted element so it never resolves as its
+            // own drop target while following the cursor.
+            el.style.pointerEvents = "none";
+          }
+          // Compose with any pre-existing inline transform (prototype HTML is
+          // user content and may define its own) rather than clobbering it.
+          var base = snap.prevTransform ? snap.prevTransform + " " : "";
+          el.style.transform = base + "translate(" + dx + "px, " + dy + "px)";
+        });
+      }
+      function clearReorderLift(): void {
+        reorderLiftedMembers.forEach(function (snap) {
+          var el = snap.el;
+          el.style.transform = snap.prevTransform;
+          el.style.transition = snap.prevTransition;
+          el.style.zIndex = snap.prevZIndex;
+          el.style.boxShadow = snap.prevBoxShadow;
+          el.style.willChange = snap.prevWillChange;
+          el.style.pointerEvents = snap.prevPointerEvents;
+        });
+        reorderLiftedMembers = [];
+      }
+      // ── Phase 0.1 hysteresis + Phase 1.2 live sibling reflow ──────────────
+      // Stabilize the resolved drop target so the preview + gap don't strobe on
+      // a boundary, then (for a SAME-container, simple packed flex row/column
+      // only) translate the siblings aside so the OPEN GAP is the preview of
+      // exactly where the item lands. Non-packed / wrap / grid / space-between /
+      // flex-grow / cross-container all fall back to the indicator-only line
+      // (option 1: never animate a preview that wouldn't match the real drop).
+      // Mirrors the tested reference in shared/drag-reflow.ts
+      // (resolveTargetHysteresis / isSimplePackedContainer / computeReorderOffsets).
+      var reorderCommittedTarget: any = null;
+      var reorderCommittedSlot: number | null = null;
+      var reorderCommittedAt = 0;
+      var reflowSiblings: {
+        el: HTMLElement;
+        prevTransform: string;
+        prevTransition: string;
+      }[] = [];
+      var reflowKey: string | null = null;
+      var packedCacheContainer: Element | null = null;
+      var packedCacheResult = false;
+      function reorderMainAxis(target): "x" | "y" {
+        return target && target.axis === "y" ? "y" : "x";
+      }
+      function reorderRealChildren(container: Element): Element[] {
+        var out: Element[] = [];
+        var kids = container.children;
+        for (var i = 0; i < kids.length; i += 1) {
+          var k = kids[i];
+          if (k.nodeType === 1 && !isOverlayElement(k)) out.push(k);
+        }
+        return out;
+      }
+      function reorderSlotForTarget(target, real: Element[]) {
+        if (target.placement === "inside") {
+          return { slot: real.length, boundary: null as number | null };
+        }
+        var ai = real.indexOf(target.anchor);
+        if (ai < 0) return null;
+        var rect = target.anchor.getBoundingClientRect();
+        var axis = reorderMainAxis(target);
+        if (target.placement === "before") {
+          return { slot: ai, boundary: axis === "x" ? rect.left : rect.top };
+        }
+        return {
+          slot: ai + 1,
+          boundary: axis === "x" ? rect.right : rect.bottom,
+        };
+      }
+      function containerIsSimplePacked(container: Element): boolean {
+        if (packedCacheContainer === container) return packedCacheResult;
+        packedCacheContainer = container;
+        packedCacheResult = false;
+        var cs = window.getComputedStyle(container);
+        if (cs.display !== "flex" && cs.display !== "inline-flex") return false;
+        if (cs.flexDirection !== "row" && cs.flexDirection !== "column") {
+          return false;
+        }
+        if (cs.flexWrap !== "nowrap") return false;
+        var jc = cs.justifyContent;
+        if (
+          jc !== "flex-start" &&
+          jc !== "start" &&
+          jc !== "normal" &&
+          jc !== "left" &&
+          jc !== ""
+        ) {
+          return false;
+        }
+        var kids = container.children;
+        for (var i = 0; i < kids.length; i += 1) {
+          if (kids[i].nodeType !== 1) continue;
+          if (parseFloat(window.getComputedStyle(kids[i]).flexGrow) > 0) {
+            return false;
+          }
+        }
+        packedCacheResult = true;
+        return true;
+      }
+      function reorderMainGap(container: Element, axis: "x" | "y"): number {
+        var cs = window.getComputedStyle(container);
+        var raw = axis === "x" ? cs.columnGap || cs.gap : cs.rowGap || cs.gap;
+        var n = readPx(raw);
+        return Number.isFinite(n) && n > 0 ? n : 0;
+      }
+      function clearReorderReflow(): void {
+        reflowSiblings.forEach(function (s) {
+          s.el.style.transform = s.prevTransform;
+          s.el.style.transition = s.prevTransition;
+        });
+        reflowSiblings = [];
+        reflowKey = null;
+      }
+      // Figma's "don't nest into a smaller container" guard (⌘/Ctrl overrides).
+      function applyReorderSizeGuard(target, ev) {
+        if (!liveReflowEnabled || !target || target.placement !== "inside") {
+          return target;
+        }
+        if (ev && (ev.metaKey || ev.ctrlKey)) return target;
+        var container = dropContainerForTarget(target);
+        if (!container || container === reorderEl) return target;
+        var crect = container.getBoundingClientRect();
+        var drect = (reorderEl as HTMLElement).getBoundingClientRect();
+        if (crect.width < drect.width || crect.height < drect.height) {
+          return null;
+        }
+        return target;
+      }
+      // Stabilize a freshly-resolved target against the committed one. Only
+      // same-container flow-insert targets are damped; anything else passes
+      // through and resets the committed state.
+      function stabilizeReorderTarget(rawTarget, cx, cy, now) {
+        if (
+          !liveReflowEnabled ||
+          !rawTarget ||
+          rawTarget.dropMode !== "flow-insert"
+        ) {
+          reorderCommittedTarget = null;
+          reorderCommittedSlot = null;
+          return rawTarget;
+        }
+        var container = dropContainerForTarget(rawTarget);
+        if (
+          !container ||
+          (reorderEl as HTMLElement).parentElement !== container
+        ) {
+          reorderCommittedTarget = null;
+          reorderCommittedSlot = null;
+          return rawTarget;
+        }
+        var real = reorderRealChildren(container);
+        var slotInfo = reorderSlotForTarget(rawTarget, real);
+        if (!slotInfo) {
+          reorderCommittedTarget = null;
+          reorderCommittedSlot = null;
+          return rawTarget;
+        }
+        var axis = reorderMainAxis(rawTarget);
+        var pointerMain = axis === "x" ? cx : cy;
+        if (
+          reorderCommittedSlot === null ||
+          slotInfo.slot === reorderCommittedSlot
+        ) {
+          reorderCommittedSlot = slotInfo.slot;
+          reorderCommittedTarget = rawTarget;
+          if (reorderCommittedAt === 0) reorderCommittedAt = now;
+          return rawTarget;
+        }
+        var crossed =
+          slotInfo.boundary !== null &&
+          Math.abs(pointerMain - slotInfo.boundary) >= 8;
+        var dwelled = now - reorderCommittedAt >= 60;
+        if (crossed || dwelled) {
+          reorderCommittedSlot = slotInfo.slot;
+          reorderCommittedTarget = rawTarget;
+          reorderCommittedAt = now;
+          return rawTarget;
+        }
+        return reorderCommittedTarget || rawTarget;
+      }
+      function applyReorderReflow(target, cx, cy): void {
+        if (!liveReflowEnabled) return;
+        if (!target || target.dropMode !== "flow-insert") {
+          clearReorderReflow();
+          return;
+        }
+        var container = dropContainerForTarget(target);
+        if (
+          !container ||
+          (reorderEl as HTMLElement).parentElement !== container ||
+          !containerIsSimplePacked(container)
+        ) {
+          clearReorderReflow();
+          return;
+        }
+        var real = reorderRealChildren(container);
+        var originIndex = real.indexOf(reorderEl);
+        var slotInfo = reorderSlotForTarget(target, real);
+        if (originIndex < 0 || !slotInfo) {
+          clearReorderReflow();
+          return;
+        }
+        var axis = reorderMainAxis(target);
+        var key = axis + ":" + slotInfo.slot;
+        if (key === reflowKey) return;
+        clearReorderReflow();
+        reflowKey = key;
+        var drect = (reorderEl as HTMLElement).getBoundingClientRect();
+        var slotMain =
+          (axis === "x" ? drect.width : drect.height) +
+          reorderMainGap(container, axis);
+        // Only siblings between origin and target shift, by ±slotMain — exact
+        // for a packed container regardless of each sibling's own size.
+        var offsets: number[] = new Array(real.length).fill(0);
+        if (slotInfo.slot > originIndex + 1) {
+          for (var a = originIndex + 1; a <= slotInfo.slot - 1; a += 1) {
+            offsets[a] = -slotMain;
+          }
+        } else if (slotInfo.slot < originIndex) {
+          for (var b = slotInfo.slot; b <= originIndex - 1; b += 1) {
+            offsets[b] = slotMain;
+          }
+        }
+        for (var i = 0; i < real.length; i += 1) {
+          if (i === originIndex) continue;
+          var el = real[i] as HTMLElement;
+          var prevTransform = el.style.transform;
+          reflowSiblings.push({
+            el: el,
+            prevTransform: prevTransform,
+            prevTransition: el.style.transition,
+          });
+          el.style.transition = "transform 140ms cubic-bezier(0.2, 0, 0, 1)";
+          var base = prevTransform ? prevTransform + " " : "";
+          var tx = axis === "x" ? offsets[i] : 0;
+          var ty = axis === "y" ? offsets[i] : 0;
+          el.style.transform = base + "translate(" + tx + "px, " + ty + "px)";
+        }
+      }
       function onReorderMove(ev) {
         var vw = window.innerWidth;
         var vh = window.innerHeight;
         var cx = ev.clientX;
         var cy = ev.clientY;
+        var dx = cx - reorderPointerStart.clientX;
+        var dy = cy - reorderPointerStart.clientY;
         var outside = cx < 0 || cy < 0 || cx > vw || cy > vh;
         pointerOutsideIframe = outside;
         // Always notify the host frame so it can track the cursor position,
@@ -8282,11 +8580,18 @@ declare var __RUNTIME_LAYER_SNAPSHOT_ENABLED__: boolean;
         if (outside && !isGroupDrag) {
           // Cursor left this iframe — hide the in-iframe insertion guide so
           // it does not render while the host shows a cross-screen drop target.
+          // Drop the lift so the host-rendered ghost is the only moving visual
+          // (re-applied automatically if the cursor comes back inside).
           hideInsertionGuide();
+          clearReorderLift();
+          clearReorderReflow();
           showTransformBadge("Move layer", cx, cy);
         } else {
-          // Cursor is inside this iframe — use existing in-iframe behavior.
-          currentTarget = flowMoveTargetForPoint(
+          // Cursor is inside this iframe — use existing in-iframe behavior,
+          // stabilized (hysteresis) and previewed with live sibling reflow when
+          // liveReflowEnabled. stabilizeReorderTarget / applyReorderReflow are
+          // no-ops (pass-through) when the flag is off.
+          var rawTarget = flowMoveTargetForPoint(
             reorderEl,
             cx,
             cy,
@@ -8294,7 +8599,16 @@ declare var __RUNTIME_LAYER_SNAPSHOT_ENABLED__: boolean;
             keepCurrentFlowParent,
             Boolean(ev.ctrlKey),
           );
+          rawTarget = applyReorderSizeGuard(rawTarget, ev);
+          currentTarget = stabilizeReorderTarget(
+            rawTarget,
+            cx,
+            cy,
+            ev.timeStamp,
+          );
           showInsertionGuideFor(currentTarget);
+          applyReorderLift(dx, dy);
+          applyReorderReflow(currentTarget, cx, cy);
           showTransformBadge(currentTarget ? "Move layer" : "Move", cx, cy);
         }
       }
@@ -8304,6 +8618,13 @@ declare var __RUNTIME_LAYER_SNAPSHOT_ENABLED__: boolean;
         document.removeEventListener("keydown", onReorderKeyDown, true);
         document.removeEventListener("keyup", onReorderKeyUp, true);
         clearActiveDragCancel(onReorderEscape);
+        // Restore the dragged element(s) AND any reflowed siblings to their
+        // untransformed state on every teardown path. onReorderUp calls this
+        // BEFORE resolving the drop target and reordering, so the commit reads
+        // un-transformed rects and — being one synchronous task — everything
+        // paints once, already in its final slot (no back-to-origin flicker).
+        clearReorderLift();
+        clearReorderReflow();
       }
       function onReorderEscape() {
         cleanupReorderDrag();
@@ -8383,14 +8704,19 @@ declare var __RUNTIME_LAYER_SNAPSHOT_ENABLED__: boolean;
         // already clears cross-screen state on re-entry so checking the
         // momentary excursion flag here would wrongly drop the element nowhere.
         if (outsideOnDrop) return;
-        currentTarget = flowMoveTargetForPoint(
-          reorderEl,
-          cx,
-          cy,
-          groupOthers,
-          keepCurrentFlowParent,
-          Boolean(ev?.ctrlKey),
-        );
+        // With live reflow on, commit the SAME stabilized target the guide/gap
+        // showed during the move (so it drops exactly where it previewed);
+        // otherwise resolve fresh from the release point (legacy behavior).
+        if (!liveReflowEnabled) {
+          currentTarget = flowMoveTargetForPoint(
+            reorderEl,
+            cx,
+            cy,
+            groupOthers,
+            keepCurrentFlowParent,
+            Boolean(ev?.ctrlKey),
+          );
+        }
         if (!currentTarget) {
           // No valid drop target — clean up the clone if one was inserted so
           // no ghost element is left in the DOM.

@@ -3167,7 +3167,7 @@ function DesignEditor() {
         return;
       }
       undoManagerRef.current?.clear(true, false);
-      recordLocalContentHistoryChangeFallback(change);
+      recordLocalContentHistoryChangeFallback({ ...change, isCheckpoint: true });
       clearRedoStacks();
       syncUndoRedoState();
     },
