@@ -61,6 +61,7 @@ import { shaderRuntimeBridgeScript } from "../../../.generated/bridge/shader-run
 import { tweakBridgeScript } from "../../../.generated/bridge/tweak.generated";
 import { zoomBridgeScript } from "../../../.generated/bridge/zoom.generated";
 import { isTrustedCanvasBridgeMessage } from "./bridge-security";
+import { dndHostLog } from "./dnd-debug";
 import { captureAnnotatedScreenshot } from "./design-canvas/annotation-snapshot";
 import { submitDesignAnnotations } from "./design-canvas/annotation-submit";
 import {
@@ -2485,6 +2486,12 @@ export function DesignCanvas({
         const selector = String(e.data.selector || "");
         const anchorSelector = String(e.data.anchorSelector || "");
         const placement = String(e.data.placement || "after");
+        dndHostLog("recv:structure-change", {
+          selector,
+          anchorSelector,
+          placement,
+          dropMode: e.data.dropMode,
+        });
         const requestId =
           typeof e.data.requestId === "string" ? e.data.requestId : undefined;
         const sourceId =
@@ -2552,6 +2559,11 @@ export function DesignCanvas({
                 : undefined,
             },
           );
+          dndHostLog("persist:result", {
+            applied,
+            requestId,
+            willAck: Boolean(requestId) && applied !== "pending",
+          });
           if (requestId && applied !== "pending") {
             iframeRef.current?.contentWindow?.postMessage(
               {

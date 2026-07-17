@@ -9571,3 +9571,93 @@ it(
     }
   },
 );
+
+it(
+  "flow-reorder of a card past a sibling text card reorders in the column, never nesting into it or converting it to flex (Phase 0.3)",
+  { timeout: 30_000 },
+  async () => {
+    const browser = await chromium.launch({ headless: true });
+    const pageErrors: string[] = [];
+
+    try {
+      const page = await browser.newPage({
+        viewport: { width: 900, height: 700 },
+      });
+      page.on("pageerror", (err) => pageErrors.push(err.message));
+
+      await page.setContent(`<!doctype html>
+<html>
+  <head>
+    <style>
+      html, body { margin: 0; width: 100%; height: 100%; background: white; }
+      #col { display: flex; flex-direction: column; gap: 16px; padding: 20px;
+             align-items: stretch; width: 340px; }
+      #col > div { height: 60px; background: #e5e7eb; }
+    </style>
+  </head>
+  <body>
+    <div id="col" data-agent-native-node-id="col">
+      <div id="card-a" data-agent-native-node-id="card-a">Card A — first card</div>
+      <div id="card-b" data-agent-native-node-id="card-b">Card B — second card</div>
+      <div id="card-c" data-agent-native-node-id="card-c">Card C — third card</div>
+    </div>
+  </body>
+</html>`);
+      await page.addScriptTag({ content: hydratedEditorChromeBridgeScript() });
+      await page.waitForSelector('[data-agent-native-edit-overlay="shield"]');
+
+      // Select #card-b (center ~170,126), then drag it straight down past
+      // #card-c's midline (~202) — the clip's "move Card B below Card C" gesture.
+      await page.mouse.click(170, 126);
+      await page.waitForFunction(() => {
+        const overlay = document.querySelector<HTMLElement>(
+          '[data-agent-native-edit-overlay="selection"]',
+        );
+        return overlay && window.getComputedStyle(overlay).display === "block";
+      });
+      await page.mouse.move(170, 126);
+      await page.mouse.down();
+      await page.mouse.move(170, 135, { steps: 4 }); // cross the 3px threshold
+      await page.mouse.move(170, 210, { steps: 10 }); // past card-c midline
+
+      // Phase 0.1: the insertion guide must be a live, visible DOM node while
+      // dragging (previously stripped by the content-stamp pass → invisible).
+      const guideMidDrag = await page.evaluate(() => {
+        const guide = document.querySelector<HTMLElement>(
+          "[data-agent-native-insertion-guide]",
+        );
+        return {
+          connected: !!guide?.isConnected,
+          display: guide ? window.getComputedStyle(guide).display : "missing",
+        };
+      });
+
+      await page.mouse.up();
+      await page.waitForTimeout(40);
+
+      const result = await page.evaluate(() => {
+        const b = document.querySelector<HTMLElement>("#card-b")!;
+        const c = document.querySelector<HTMLElement>("#card-c")!;
+        return {
+          cardBParentId: b.parentElement?.id,
+          cardCInlineDisplay: c.style.display,
+          order: Array.from(document.querySelectorAll("#col > div")).map(
+            (el) => el.id,
+          ),
+        };
+      });
+
+      // 0.3: reordered within the column, NOT nested into card-c, and card-c was
+      // NOT silently rewritten to display:flex.
+      expect(result.cardBParentId).toBe("col");
+      expect(result.cardCInlineDisplay).not.toBe("flex");
+      expect(result.order).toEqual(["card-a", "card-c", "card-b"]);
+      // 0.1: guide alive + shown during the drag.
+      expect(guideMidDrag.connected).toBe(true);
+      expect(guideMidDrag.display).not.toBe("none");
+      expect(pageErrors).toEqual([]);
+    } finally {
+      await browser.close();
+    }
+  },
+);

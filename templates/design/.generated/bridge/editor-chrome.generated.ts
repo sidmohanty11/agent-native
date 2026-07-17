@@ -24,6 +24,35 @@ export const editorChromeBridgeScript: string = `"use strict";
       }
     })();
     var scaleToolEnabled = false;
+    if (window.__DND_DEBUG === void 0) {
+      window.__DND_DEBUG = true;
+    }
+    function dndLog(phase, data) {
+      if (!window.__DND_DEBUG) return;
+      try {
+        var tag = "%c[dnd:" + phase + "]";
+        var style = "color:#8b5cf6;font-weight:bold";
+        if (data === void 0) console.log(tag, style);
+        else console.log(tag, style, data);
+      } catch (_e) {
+      }
+    }
+    function dndTarget(t) {
+      if (!t) return null;
+      try {
+        var container = dropContainerForTarget(t);
+        return {
+          anchor: t.anchor ? getSelector(t.anchor) : null,
+          placement: t.placement,
+          dropMode: t.dropMode,
+          axis: t.axis,
+          container: container ? getSelector(container) : null,
+          needsConversion: !!t.needsAutoLayoutConversion
+        };
+      } catch (_e) {
+        return { placement: t.placement, dropMode: t.dropMode };
+      }
+    }
     var statePreviewElement = null;
     var runtimeInteractionStatePreviews = [];
     var runtimeInteractionStatePreviewSequence = 0;
@@ -1401,14 +1430,23 @@ export const editorChromeBridgeScript: string = `"use strict";
     document.body.appendChild(gradientOverlay);
     var transformBadge = document.createElement("div");
     transformBadge.setAttribute("data-agent-native-transform-badge", "");
+    transformBadge.setAttribute(
+      "data-agent-native-edit-overlay",
+      "transform-badge"
+    );
     transformBadge.style.cssText = "position:fixed;z-index:100000;display:none;pointer-events:none;border:1px solid rgba(255,255,255,0.16);border-radius:4px;background:rgba(24,24,27,0.96);color:rgba(255,255,255,0.96);font:11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;padding:3px 5px;box-shadow:0 8px 20px rgba(0,0,0,0.28);";
     document.body.appendChild(transformBadge);
     var spacingBadge = document.createElement("div");
     spacingBadge.setAttribute("data-agent-native-spacing-badge", "");
+    spacingBadge.setAttribute("data-agent-native-edit-overlay", "spacing-badge");
     spacingBadge.style.cssText = "position:fixed;z-index:100000;display:none;pointer-events:none;border-radius:3px;color:white;font:10px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:700;padding:2px 4px;box-shadow:0 4px 14px rgba(0,0,0,0.18);";
     document.body.appendChild(spacingBadge);
     var insertionGuide = document.createElement("div");
     insertionGuide.setAttribute("data-agent-native-insertion-guide", "");
+    insertionGuide.setAttribute(
+      "data-agent-native-edit-overlay",
+      "insertion-guide"
+    );
     insertionGuide.style.cssText = "position:fixed;z-index:100000;display:none;pointer-events:none;background:var(--design-editor-accent-color);border-radius:999px;box-shadow:0 0 0 1px var(--design-editor-accent-color);";
     document.body.appendChild(insertionGuide);
     var snapGuideV = document.createElement("div");
@@ -4500,6 +4538,7 @@ export const editorChromeBridgeScript: string = `"use strict";
       return clientX < 0 || clientY < 0 || clientX > window.innerWidth || clientY > window.innerHeight;
     }
     function postCrossScreenDrag(phase, el, ev) {
+      dndLog("post:cross-screen", { phase, el: getSelector(el ?? null) });
       if (phase === "cancel") {
         activeCrossScreenStyleSnapshot = void 0;
         window.parent.postMessage(
@@ -4609,6 +4648,9 @@ export const editorChromeBridgeScript: string = `"use strict";
       }
       return true;
     }
+    function isTextBearingLeaf(el) {
+      return hasOnlyLeafContent(el) && (el.textContent || "").trim().length > 0;
+    }
     function isContainerDropTarget(el) {
       if (!el || el === document.documentElement) return false;
       if (isOverlayElement(el) || isLayerInteractionBlocked(el)) return false;
@@ -4705,7 +4747,7 @@ export const editorChromeBridgeScript: string = `"use strict";
       }
       var hit = elementFromEditorPoint(clientX, clientY);
       if (hit && hit !== document.documentElement && !isDraggedOrInsideDragged(hit) && !isOverlayElement(hit) && !isTemplateCloneElement(hit)) {
-        if (isContainerDropTarget(hit)) {
+        if (isContainerDropTarget(hit) && !isTextBearingLeaf(hit)) {
           var containerRect = hit.getBoundingClientRect();
           var edgeAxis = hit.parentElement ? parentFlowAxis(hit.parentElement) : parentFlowAxis(hit);
           var edgePlacement = edgePlacementForRect(
@@ -5184,6 +5226,12 @@ export const editorChromeBridgeScript: string = `"use strict";
     }
     function postVisualStructureChange(el, target, origin) {
       if (!el || !target || !target.anchor) return;
+      dndLog("post:structure-change", {
+        el: getSelector(el),
+        anchor: getSelector(target.anchor),
+        placement: target.placement,
+        dropMode: target.dropMode || "flow-insert"
+      });
       var requestId = "move-" + Date.now() + "-" + Math.random().toString(16).slice(2);
       pendingStructureMoves[requestId] = {
         requestId,
@@ -5712,6 +5760,11 @@ export const editorChromeBridgeScript: string = `"use strict";
               ev.timeStamp
             );
             showInsertionGuideFor(currentTarget);
+            var _dndKey = currentTarget ? getSelector(currentTarget.anchor) + "|" + currentTarget.placement + "|" + currentTarget.dropMode : "none";
+            if (_dndKey !== reorderLastTargetKey) {
+              reorderLastTargetKey = _dndKey;
+              dndLog("target", dndTarget(currentTarget));
+            }
             applyReorderLift2(dx, dy);
             applyReorderReflow2(currentTarget, cx, cy);
             showTransformBadge(currentTarget ? "Move layer" : "Move", cx, cy);
@@ -5790,6 +5843,11 @@ export const editorChromeBridgeScript: string = `"use strict";
             cy,
             ev && typeof ev.timeStamp === "number" ? ev.timeStamp : reorderCommittedAt
           ) : finalRaw;
+          dndLog("commit:resolve", {
+            raw: dndTarget(finalRaw),
+            final: dndTarget(currentTarget),
+            ctrl: Boolean(ev && ev.ctrlKey)
+          });
           if (!currentTarget) {
             if (duplicatedForDrag && reorderEl && reorderEl !== originalSelectedEl) {
               if (reorderEl.parentElement)
@@ -5846,6 +5904,10 @@ export const editorChromeBridgeScript: string = `"use strict";
               dropContainerForTarget(currentTarget)
             );
             applyRuntimeReorder(reorderEl, currentTarget);
+            dndLog("commit:done", {
+              el: getSelector(reorderEl),
+              parent: reorderEl.parentElement ? getSelector(reorderEl.parentElement) : null
+            });
             postVisualStructureChange(reorderEl, currentTarget, {
               prevParent,
               prevNextSibling,
@@ -5867,6 +5929,7 @@ export const editorChromeBridgeScript: string = `"use strict";
           };
         });
         var reorderGestureStartRect = reorderEl.getBoundingClientRect();
+        var reorderLastTargetKey = null;
         var keepCurrentFlowParent = bridgeSpaceKeyPressed;
         var currentTarget = flowMoveTargetForPoint(
           reorderEl,
@@ -5877,6 +5940,12 @@ export const editorChromeBridgeScript: string = `"use strict";
           Boolean(e.ctrlKey)
         );
         showInsertionGuideFor(currentTarget);
+        dndLog("start:reorder", {
+          el: getSelector(reorderEl),
+          isGroup: isGroupDrag,
+          ctrl: Boolean(e.ctrlKey),
+          target: dndTarget(currentTarget)
+        });
         var pointerOutsideIframe = false;
         var reorderSelector = getSelector(reorderEl);
         var reorderSourceId = getSourceId(reorderEl);
@@ -5937,6 +6006,7 @@ export const editorChromeBridgeScript: string = `"use strict";
       var dragEl = gestureEl;
       var moved = false;
       var DRAG_THRESHOLD = 3;
+      dndLog("start:free", { el: getSelector(gestureEl), isGroup: isGroupDrag });
       var currentAutoLayoutTarget = null;
       var snapCandidateRects = collectSnapCandidateRects(dragEl, groupOthers);
       var dragElStartRect = dragEl.getBoundingClientRect();
@@ -6149,6 +6219,10 @@ export const editorChromeBridgeScript: string = `"use strict";
               dropContainerForTarget(currentAutoLayoutTarget)
             );
             applyRuntimeReorder(dragEl, currentAutoLayoutTarget);
+            dndLog("commit:free-nest", {
+              el: getSelector(dragEl),
+              target: dndTarget(currentAutoLayoutTarget)
+            });
             postVisualStructureChange(dragEl, currentAutoLayoutTarget, {
               prevParent,
               prevNextSibling,
@@ -6157,6 +6231,7 @@ export const editorChromeBridgeScript: string = `"use strict";
           }
         } else {
           setMembersOpacity(null);
+          dndLog("commit:free-absolute", { count: memberStates.length });
           memberStates.forEach(function(state) {
             var styles = {
               position: state.el.style.position,
@@ -6505,6 +6580,9 @@ export const editorChromeBridgeScript: string = `"use strict";
         var previousSelectedEl = selectedEl;
         selectedEl = target;
         positionOverlay(selectionOverlay, selectedEl);
+        if (!ev?.shiftKey && passiveSelectionEls.length) {
+          setPassiveSelectionElements([]);
+        }
         preservePreviousSelectedElementForShiftClick(
           previousSelectedEl,
           selectedEl,
@@ -7701,6 +7779,10 @@ export const editorChromeBridgeScript: string = `"use strict";
         return;
       }
       if (e.data.type === "visual-structure-ack") {
+        dndLog("ack", {
+          requestId: e.data.requestId,
+          applied: Boolean(e.data.applied)
+        });
         var move = pendingStructureMoves[e.data.requestId];
         if (!move) return;
         delete pendingStructureMoves[e.data.requestId];

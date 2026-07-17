@@ -215,6 +215,7 @@ import type {
 } from "@/components/design/design-canvas/iframe-events";
 import type { MotionTrackWire } from "@/components/design/design-canvas/motion-types";
 import { DesignCanvas } from "@/components/design/DesignCanvas";
+import { dndHostLog } from "@/components/design/dnd-debug";
 import { DesignEditorSkeleton } from "@/components/design/DesignEditorSkeleton";
 import {
   AssetLibraryPanel,
@@ -13950,6 +13951,13 @@ function DesignEditor() {
         anchorRect?: { x: number; y: number; width: number; height: number };
       },
     ) => {
+      dndHostLog("persist:begin", {
+        selector,
+        anchorSelector,
+        placement,
+        dropMode: details?.dropMode,
+        source: activeCanvasSourceType,
+      });
       if (!canEditDesign) return false;
       if (!activeFile) return false;
       if (activeCanvasSourceType === "localhost") {
@@ -13988,6 +13996,10 @@ function DesignEditor() {
           ? { nodeId: anchorNode.id }
           : { selector: anchorSelector },
         placement,
+      });
+      dndHostLog("persist:rewrite", {
+        status: patch.result.status,
+        message: patch.result.message,
       });
       if (patch.result.status !== "applied") {
         toast.error(
@@ -14493,6 +14505,10 @@ function DesignEditor() {
           ? { nodeId: anchorNode.id }
           : { selector: anchorSelector },
         placement,
+      });
+      dndHostLog("persist:rewrite", {
+        status: patch.result.status,
+        message: patch.result.message,
       });
       if (patch.result.status !== "applied") {
         toast.error(
@@ -18203,6 +18219,12 @@ function DesignEditor() {
       sourcePointerOffset?: { x: number; y: number };
       styleSnapshot?: PortableStyleSnapshot;
     }) => {
+      dndHostLog("persist:cross-screen", {
+        sourceScreenId,
+        targetScreenId,
+        targetAnchorPlacement,
+        targetDropMode,
+      });
       if (!canEditDesign) return;
       if (sourceScreenId === targetScreenId) return;
 

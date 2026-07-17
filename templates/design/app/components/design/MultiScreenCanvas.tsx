@@ -84,6 +84,7 @@ import {
 } from "./canvas-primitive-style";
 import { appendHitTestResponder } from "./design-canvas/hit-test";
 import { DesignCanvas } from "./DesignCanvas";
+import { dndHostLog } from "./dnd-debug";
 import {
   gradientToCss,
   parseGradientCss,
@@ -2263,6 +2264,13 @@ export const MultiScreenCanvas = memo(function MultiScreenCanvas({
         return;
       }
 
+      if (msg.phase !== "move") {
+        dndHostLog("overview:cross-screen", {
+          phase: msg.phase,
+          source: sourceScreenId,
+          selector: msg.selector,
+        });
+      }
       if (msg.phase === "start") {
         setCrossScreenSourceIsBoard(sourceScreenId === boardFileId);
         crossScreenDragMsgRef.current = {
@@ -5161,6 +5169,7 @@ export const MultiScreenCanvas = memo(function MultiScreenCanvas({
             frameGeometryWithOverrides(after, state.originFrames),
             after,
           );
+          dndHostLog("overview:frame-commit", { ids: state.targetIds });
           suppressNextPick.current = true;
         }
         finishDrag();
