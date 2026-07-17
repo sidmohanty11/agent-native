@@ -215,7 +215,6 @@ import type {
 } from "@/components/design/design-canvas/iframe-events";
 import type { MotionTrackWire } from "@/components/design/design-canvas/motion-types";
 import { DesignCanvas } from "@/components/design/DesignCanvas";
-import { dndHostLog } from "@/components/design/dnd-debug";
 import { DesignEditorSkeleton } from "@/components/design/DesignEditorSkeleton";
 import {
   AssetLibraryPanel,
@@ -223,6 +222,7 @@ import {
   type DesignExtensionSlotContext,
 } from "@/components/design/DesignExtensionsPanel";
 import { DesignImportPanel } from "@/components/design/DesignImportPanel";
+import { dndHostLog } from "@/components/design/dnd-debug";
 import { nextTextDecorationLineValue } from "@/components/design/edit-panel/typography-helpers";
 import {
   EditPanel,
@@ -27057,7 +27057,10 @@ function DesignEditor() {
             details,
           ) => {
             activateResponsiveScope();
-            handleScreenVisualStructureChange(
+            // Return the result so the bridge gets a real applied/false/pending
+            // ack; without it a rejected drop could never roll back (undefined
+            // !== false read as applied).
+            return handleScreenVisualStructureChange(
               screen.id,
               selector,
               anchorSelector,

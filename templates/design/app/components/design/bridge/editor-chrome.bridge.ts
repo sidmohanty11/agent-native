@@ -7189,8 +7189,9 @@ declare var __LIVE_REFLOW_ENABLED__: boolean;
       };
     }
 
-    // Flow child dropped into a plain container: match the absolute-drag path
-    // by converting that container to auto layout before the structural move.
+    // Flow child (a real flow-reorder gesture) dropped into a plain container:
+    // convert it to auto layout before the structural move. This is the flow
+    // path only; the absolute/free drag keeps shapes free (no conversion).
     if (
       target &&
       target.dropMode === "flow-insert" &&
@@ -7366,11 +7367,21 @@ declare var __LIVE_REFLOW_ENABLED__: boolean;
         isContainerDropTarget(cursor) &&
         !(parent && parent !== document.body && isAutoLayoutElement(parent))
       ) {
-        // B5-4 (absolute path): pointer over the container's own
-        // background — its padding or a gap between children. Prefer the
-        // nearest child slot (insertion line at the pointer index) over
-        // plain "inside" (which appends after the last child); fall back
-        // to "inside" only for containers with no visible children.
+        // Free (absolute) element into a non-auto-layout container stays free:
+        // nest as an absolute child at the drop point, never convert to flex.
+        // Same-parent drop is a pure reposition (null → onUp writes left/top).
+        if (!isAutoLayoutElement(cursor)) {
+          if (cursor === el.parentElement) return null;
+          return {
+            anchor: cursor,
+            placement: "inside",
+            axis: "y",
+            dropMode: "absolute-container",
+          };
+        }
+        // B5-4: pointer over an auto-layout container's background (padding or a
+        // gap). Prefer the nearest child slot over plain "inside" (append last);
+        // fall back to "inside" for an empty container.
         var betweenContainerChildren = nearestChildInsertionTarget(
           cursor,
           clientX,
@@ -7383,8 +7394,6 @@ declare var __LIVE_REFLOW_ENABLED__: boolean;
             placement: betweenContainerChildren.placement,
             axis: betweenContainerChildren.axis,
             dropMode: "flow-insert",
-            needsAutoLayoutConversion: !isAutoLayoutElement(cursor),
-            conversionTarget: cursor,
           };
         }
         return {
@@ -7392,11 +7401,21 @@ declare var __LIVE_REFLOW_ENABLED__: boolean;
           placement: "inside",
           axis: parentFlowAxis(cursor),
           dropMode: "flow-insert",
-          needsAutoLayoutConversion: !isAutoLayoutElement(cursor),
-          conversionTarget: cursor,
         };
       }
       if (parent && parent !== document.body && isContainerDropTarget(parent)) {
+        // Free element over a sibling in a non-auto-layout parent stays free:
+        // absolute child at the drop point (same-parent → null reposition).
+        if (!isAutoLayoutElement(parent)) {
+          if (parent === el.parentElement) return null;
+          return {
+            anchor: parent,
+            placement: "inside",
+            axis: "y",
+            dropMode: "absolute-container",
+          };
+        }
+        // parent is an established auto-layout list: reorder within its flow.
         // Anchor-candidate gate: cursor is a plain sibling under `parent`
         // being used as a before/after anchor — but if it's a template
         // clone (no counterpart in source HTML), fall back to the nearest
@@ -7416,8 +7435,6 @@ declare var __LIVE_REFLOW_ENABLED__: boolean;
               placement: cloneFallback.placement,
               axis: cloneFallback.axis,
               dropMode: "flow-insert",
-              needsAutoLayoutConversion: !isAutoLayoutElement(parent),
-              conversionTarget: parent,
             };
           }
           return {
@@ -7425,8 +7442,6 @@ declare var __LIVE_REFLOW_ENABLED__: boolean;
             placement: "inside",
             axis: parentFlowAxis(parent),
             dropMode: "flow-insert",
-            needsAutoLayoutConversion: !isAutoLayoutElement(parent),
-            conversionTarget: parent,
           };
         }
         var parentAxis = parentFlowAxis(parent);
@@ -7441,8 +7456,6 @@ declare var __LIVE_REFLOW_ENABLED__: boolean;
           placement: childPointer < childCenter ? "before" : "after",
           axis: parentAxis,
           dropMode: "flow-insert",
-          needsAutoLayoutConversion: !isAutoLayoutElement(parent),
-          conversionTarget: parent,
         };
       }
       cursor = parent;
@@ -9238,25 +9251,10 @@ declare var __LIVE_REFLOW_ENABLED__: boolean;
         postVisualDuplicateChange(originalSelectedEl, dragEl);
       } else if (currentAutoLayoutTarget) {
         setMembersOpacity(null);
-        // Figma-parity nest-on-drop: the target container may be a plain
-        // rect/div that isn't auto-layout yet (see
-        // autoLayoutInsertionTargetForPoint's needsAutoLayoutConversion).
-        // Convert it to flex BEFORE reparenting/posting the move so the
-        // host applies the two edits in the right order against its
-        // synchronous same-tick content refs (container becomes flex, then
-        // the child moves into it and loses absolute positioning via the
-        // existing "flow-insert" dropMode handling). For group drags the
-        // conversion fires ONCE for the container; every member then nests
-        // consecutively via applyGroupStructureDrop.
-        if (
-          currentAutoLayoutTarget.needsAutoLayoutConversion &&
-          currentAutoLayoutTarget.conversionTarget
-        ) {
-          applyAutoLayoutConversionForDrop(
-            currentAutoLayoutTarget.conversionTarget,
-            groupEls,
-          );
-        }
+        // Nest-on-drop: a free element nests as an absolute child of a plain
+        // container ("absolute-container", keeps left/top) or flow-inserts into
+        // an existing auto-layout frame. The resolver never requests an implicit
+        // flex conversion, so there is none to apply here.
         if (isGroupDrag) {
           applyGroupStructureDrop(
             groupEls,

@@ -229,10 +229,17 @@ export function draftPrimitiveToInsert(
   frameGeometry: FrameGeometry,
   metadata?: ResolvedScreenMetadata,
 ): CanvasPrimitiveInsert {
-  const viewport = {
-    width: metadata?.width ?? frameGeometry.width,
-    height: metadata?.height ?? frameGeometry.height,
-  };
+  // Inline screens reflow to the frame, so the frame IS the content space and a
+  // draw must land 1:1 (its dragged size). The metadata 1280×2560 fallback for
+  // blank screens would otherwise stretch shapes on a non-portrait frame; only
+  // fixed-viewport sources (localhost/fusion) render scaled-to-fit.
+  const reflowsToFrame = !metadata || metadata.source === "inline";
+  const viewport = reflowsToFrame
+    ? { width: frameGeometry.width, height: frameGeometry.height }
+    : {
+        width: metadata.width ?? frameGeometry.width,
+        height: metadata.height ?? frameGeometry.height,
+      };
   const scaleX = viewport.width / Math.max(1, frameGeometry.width);
   const scaleY = viewport.height / Math.max(1, frameGeometry.height);
   const roundLocal = (value: number) => Math.round(value) || 0;

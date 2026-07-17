@@ -4929,6 +4929,15 @@ export const editorChromeBridgeScript: string = `"use strict";
           };
         }
         if (cursor !== document.body && isContainerDropTarget(cursor) && !(parent && parent !== document.body && isAutoLayoutElement(parent))) {
+          if (!isAutoLayoutElement(cursor)) {
+            if (cursor === el.parentElement) return null;
+            return {
+              anchor: cursor,
+              placement: "inside",
+              axis: "y",
+              dropMode: "absolute-container"
+            };
+          }
           var betweenContainerChildren = nearestChildInsertionTarget(
             cursor,
             clientX,
@@ -4940,21 +4949,26 @@ export const editorChromeBridgeScript: string = `"use strict";
               anchor: betweenContainerChildren.anchor,
               placement: betweenContainerChildren.placement,
               axis: betweenContainerChildren.axis,
-              dropMode: "flow-insert",
-              needsAutoLayoutConversion: !isAutoLayoutElement(cursor),
-              conversionTarget: cursor
+              dropMode: "flow-insert"
             };
           }
           return {
             anchor: cursor,
             placement: "inside",
             axis: parentFlowAxis(cursor),
-            dropMode: "flow-insert",
-            needsAutoLayoutConversion: !isAutoLayoutElement(cursor),
-            conversionTarget: cursor
+            dropMode: "flow-insert"
           };
         }
         if (parent && parent !== document.body && isContainerDropTarget(parent)) {
+          if (!isAutoLayoutElement(parent)) {
+            if (parent === el.parentElement) return null;
+            return {
+              anchor: parent,
+              placement: "inside",
+              axis: "y",
+              dropMode: "absolute-container"
+            };
+          }
           if (isTemplateCloneElement(cursor)) {
             var cloneFallback = nearestChildInsertionTarget(
               parent,
@@ -4967,18 +4981,14 @@ export const editorChromeBridgeScript: string = `"use strict";
                 anchor: cloneFallback.anchor,
                 placement: cloneFallback.placement,
                 axis: cloneFallback.axis,
-                dropMode: "flow-insert",
-                needsAutoLayoutConversion: !isAutoLayoutElement(parent),
-                conversionTarget: parent
+                dropMode: "flow-insert"
               };
             }
             return {
               anchor: parent,
               placement: "inside",
               axis: parentFlowAxis(parent),
-              dropMode: "flow-insert",
-              needsAutoLayoutConversion: !isAutoLayoutElement(parent),
-              conversionTarget: parent
+              dropMode: "flow-insert"
             };
           }
           var parentAxis = parentFlowAxis(parent);
@@ -4989,9 +4999,7 @@ export const editorChromeBridgeScript: string = `"use strict";
             anchor: cursor,
             placement: childPointer < childCenter ? "before" : "after",
             axis: parentAxis,
-            dropMode: "flow-insert",
-            needsAutoLayoutConversion: !isAutoLayoutElement(parent),
-            conversionTarget: parent
+            dropMode: "flow-insert"
           };
         }
         cursor = parent;
@@ -6192,12 +6200,6 @@ export const editorChromeBridgeScript: string = `"use strict";
           postVisualDuplicateChange(originalSelectedEl, dragEl);
         } else if (currentAutoLayoutTarget) {
           setMembersOpacity(null);
-          if (currentAutoLayoutTarget.needsAutoLayoutConversion && currentAutoLayoutTarget.conversionTarget) {
-            applyAutoLayoutConversionForDrop(
-              currentAutoLayoutTarget.conversionTarget,
-              groupEls
-            );
-          }
           if (isGroupDrag) {
             applyGroupStructureDrop(
               groupEls,

@@ -908,6 +908,75 @@ it(
 );
 
 it(
+  "editor chrome bridge keeps a free element free when dragged into a plain container (no strip, no auto-layout conversion)",
+  { timeout: 30_000 },
+  async () => {
+    const browser = await chromium.launch({ headless: true });
+    const pageErrors: string[] = [];
+
+    try {
+      const page = await browser.newPage({
+        viewport: { width: 900, height: 700 },
+      });
+      page.on("pageerror", (err) => pageErrors.push(err.message));
+
+      // A drawn rectangle (absolute, body child) + a plain <main> frame.
+      // Dragging the rect into <main> must keep it absolute and NOT convert
+      // <main> to auto layout — the "trapped shape inside <main>" regression.
+      await page.setContent(`<!doctype html>
+<html>
+  <head>
+    <style>
+      html, body { margin: 0; width: 100%; height: 100%; background: white; }
+      #frame { position: relative; margin-left: 280px; margin-top: 180px; width: 420px; height: 340px; background: #f3f4f6; }
+      #rect { position: absolute; left: 40px; top: 40px; width: 120px; height: 80px; background: #dadada; }
+    </style>
+  </head>
+  <body>
+    <main id="frame" data-agent-native-node-id="frame"></main>
+    <div id="rect" data-an-primitive="rectangle" data-agent-native-node-id="rect"></div>
+  </body>
+</html>`);
+      await page.addScriptTag({ content: hydratedEditorChromeBridgeScript() });
+      await page.waitForSelector('[data-agent-native-edit-overlay="shield"]');
+
+      // Select the rect (center at 40+60, 40+40 = 100, 80).
+      await page.mouse.click(100, 80);
+      await page.waitForFunction(() => {
+        const overlay = document.querySelector<HTMLElement>(
+          '[data-agent-native-edit-overlay="selection"]',
+        );
+        return overlay && window.getComputedStyle(overlay).display === "block";
+      });
+
+      // Drag it into the middle of <main>.
+      await page.mouse.move(100, 80);
+      await page.mouse.down();
+      await page.mouse.move(490, 350, { steps: 12 });
+      await page.mouse.up();
+      await page.waitForTimeout(60);
+
+      const result = await page.evaluate(() => {
+        const rect = document.querySelector<HTMLElement>("#rect");
+        const frame = document.querySelector<HTMLElement>("#frame");
+        return {
+          rectPosition: rect ? window.getComputedStyle(rect).position : null,
+          frameDisplay: frame ? window.getComputedStyle(frame).display : null,
+          rectMoved: rect?.style.left !== "40px" || rect?.style.top !== "40px",
+        };
+      });
+
+      expect(result.rectPosition).toBe("absolute"); // not stripped to static
+      expect(result.frameDisplay).toBe("block"); // <main> NOT converted to flex
+      expect(result.rectMoved).toBe(true); // the drag actually committed
+      expect(pageErrors).toEqual([]);
+    } finally {
+      await browser.close();
+    }
+  },
+);
+
+it(
   "editor chrome bridge (live reflow) lifts and follows a dragged flow element, then restores it on drop",
   { timeout: 30_000 },
   async () => {
@@ -4576,7 +4645,7 @@ async function readBridgeMessages(page: import("@playwright/test").Page) {
 }
 
 it(
-  "editor chrome bridge nests a dragged rectangle into a plain rectangle target and converts it to auto-layout",
+  "editor chrome bridge nests a dragged rectangle into a plain rectangle target as a free child (no auto-layout conversion)",
   { timeout: 30_000 },
   async () => {
     const browser = await chromium.launch({ headless: true });
@@ -4676,37 +4745,32 @@ it(
         return {
           draggedParentId: dragged.parentElement?.id,
           frameDisplay: frameStyle.display,
-          frameFlexDirection: frameStyle.flexDirection,
+          draggedPosition: window.getComputedStyle(dragged).position,
         };
       });
 
+      // A free (absolute) element dropped into a plain rectangle nests as a
+      // FREE child: it keeps position:absolute and the target is NOT converted
+      // to auto layout. Implicit conversion would rewrite the user's source
+      // (auto layout is an explicit, previewed action) and trap the shape.
       expect(result.draggedParentId).toBe("frame");
-      expect(result.frameDisplay).toBe("flex");
-      expect(result.frameFlexDirection).toBe("column");
-      // Note: clearing the moved child's absolute position/left/top is a
-      // host-side effect (DesignEditor.tsx's handleVisualStructureChange
-      // calls removeAbsolutePositioningFromNodeInHtml whenever dropMode is
-      // "flow-insert", which this drop already asserts below) driven by the
-      // structure-change message the bridge posts — there is no host
-      // attached in this bridge-only Playwright page to round-trip that
-      // patched HTML back into the iframe, so the optimistic DOM here still
-      // shows the pre-strip inline left/top. The message-level assertions
-      // below are what prove the bridge asked for the strip.
+      expect(result.frameDisplay).toBe("block");
+      expect(result.draggedPosition).toBe("absolute");
 
       const messages = await readBridgeMessages(page);
-      const styleMessage = messages.find(
+      const frameFlexMessage = messages.find(
         (m) =>
           m.type === "visual-style-change" &&
-          (m as any).selector?.includes("frame"),
-      ) as any;
+          (m as any).selector?.includes("frame") &&
+          (m as any).styles?.display === "flex",
+      );
       const structureMessage = messages.find(
         (m) => m.type === "visual-structure-change",
       ) as any;
-      expect(styleMessage).toBeTruthy();
-      expect(styleMessage.styles.display).toBe("flex");
-      expect(styleMessage.styles["flex-direction"]).toBe("column");
+      // No implicit auto-layout conversion is posted for the target.
+      expect(frameFlexMessage).toBeFalsy();
       expect(structureMessage).toBeTruthy();
-      expect(structureMessage.dropMode).toBe("flow-insert");
+      expect(structureMessage.dropMode).toBe("absolute-container");
       expect(structureMessage.placement).toBe("inside");
       expect(structureMessage.anchorPayload).toMatchObject({
         tagName: "div",
@@ -4721,12 +4785,7 @@ it(
         },
       });
       expect(structureMessage.anchorPayload.computedStyles.display).toBe(
-        "flex",
-      );
-      // The style conversion must be posted before the structural move so the
-      // host applies them in order against its synchronous content refs.
-      expect(messages.indexOf(styleMessage)).toBeLessThan(
-        messages.indexOf(structureMessage),
+        "block",
       );
       expect(pageErrors).toEqual([]);
     } finally {
@@ -4795,22 +4854,22 @@ it(
         return {
           labelParentId: label.parentElement?.id,
           frameDisplay: window.getComputedStyle(frame).display,
+          labelPosition: window.getComputedStyle(label).position,
         };
       });
 
+      // Text nests into a plain rectangle as a FREE child, same as a shape:
+      // it keeps position:absolute and the target is not converted to flex.
       expect(result.labelParentId).toBe("frame");
-      expect(result.frameDisplay).toBe("flex");
+      expect(result.frameDisplay).toBe("block");
+      expect(result.labelPosition).toBe("absolute");
 
-      // Clearing the moved node's absolute position is a host-side effect of
-      // the "flow-insert" dropMode (see the rectangle-onto-rectangle test's
-      // comment above) — assert the message that drives it instead of the
-      // unattached bridge-only page's optimistic DOM state.
       const messages = await readBridgeMessages(page);
       const structureMessage = messages.find(
         (m) => m.type === "visual-structure-change",
       ) as any;
       expect(structureMessage).toBeTruthy();
-      expect(structureMessage.dropMode).toBe("flow-insert");
+      expect(structureMessage.dropMode).toBe("absolute-container");
       expect(pageErrors).toEqual([]);
     } finally {
       await browser.close();
@@ -5476,7 +5535,7 @@ it(
 );
 
 it(
-  "editor chrome bridge drops a multi-selected group consecutively into a container with one auto-layout conversion",
+  "editor chrome bridge drops a multi-selected group consecutively into a container as free children (no auto-layout conversion)",
   { timeout: 30_000 },
   async () => {
     const browser = await chromium.launch({ headless: true });
@@ -5542,15 +5601,18 @@ it(
         return {
           childIds: Array.from(target.children).map((c) => c.id),
           targetDisplay: window.getComputedStyle(target).display,
-          targetFlexDirection: window.getComputedStyle(target).flexDirection,
+          childPositions: Array.from(target.children).map(
+            (c) => window.getComputedStyle(c).position,
+          ),
         };
       });
 
       // Both members nested CONSECUTIVELY, in document order (A before B even
-      // though B was the dragged member).
+      // though B was the dragged member) — as FREE children: each keeps
+      // position:absolute and the container is NOT converted to auto layout.
       expect(result.childIds).toEqual(["boxA", "boxB"]);
-      expect(result.targetDisplay).toBe("flex");
-      expect(result.targetFlexDirection).toBe("column");
+      expect(result.targetDisplay).toBe("block");
+      expect(result.childPositions).toEqual(["absolute", "absolute"]);
 
       const messages = await readBridgeMessages(page);
       const conversionMessages = messages.filter(
@@ -5564,8 +5626,8 @@ it(
       const marqueeMessages = messages.filter(
         (m) => m.type === "agent-native:layer-marquee-selection",
       ) as any[];
-      // Auto-layout conversion fires exactly ONCE for the container.
-      expect(conversionMessages.length).toBe(1);
+      // No implicit auto-layout conversion of the container.
+      expect(conversionMessages.length).toBe(0);
       // One structure change per member.
       expect(structureMessages.length).toBe(2);
       // Selection restored (final marquee-selection message carries both).
@@ -6054,7 +6116,10 @@ it(
       await page.mouse.up();
       await page.waitForTimeout(30);
 
-      // Drag the user-red text into the light frame too.
+      // Drag the user-red text into the light frame too — to a DIFFERENT spot
+      // than the auto-white text. Free-placed shapes stay where dropped, so a
+      // second drop onto the first text's landing point would nest into that
+      // text instead of the frame; separate the two drop points.
       await page.mouse.click(110, 432);
       await page.waitForFunction(() => {
         const overlay = document.querySelector<HTMLElement>(
@@ -6065,7 +6130,7 @@ it(
       await page.mouse.move(110, 432);
       await page.mouse.down();
       await page.mouse.move(120, 442, { steps: 2 });
-      await page.mouse.move(560, 240, { steps: 8 });
+      await page.mouse.move(480, 330, { steps: 8 });
       await page.mouse.up();
       await page.waitForTimeout(30);
 
