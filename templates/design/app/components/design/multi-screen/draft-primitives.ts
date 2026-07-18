@@ -12,7 +12,7 @@ import {
 
 import { DEFAULT_LINE_STROKE_WIDTH_PX } from "../canvas-primitive-style";
 import { boardPointToScreenLocalPoint } from "./coordinate-transforms";
-import { getFrameCenter } from "./frame-geometry";
+import { getFrameCenter, getScreenPreviewViewport } from "./frame-geometry";
 import type {
   CanvasPrimitiveInsert,
   DraftCreationPreview,
@@ -229,17 +229,27 @@ export function draftPrimitiveToInsert(
   frameGeometry: FrameGeometry,
   metadata?: ResolvedScreenMetadata,
 ): CanvasPrimitiveInsert {
-  // Inline screens reflow to the frame, so the frame IS the content space and a
-  // draw must land 1:1 (its dragged size). The metadata 1280×2560 fallback for
-  // blank screens would otherwise stretch shapes on a non-portrait frame; only
-  // fixed-viewport sources (localhost/fusion) render scaled-to-fit.
-  const reflowsToFrame = !metadata || metadata.source === "inline";
-  const viewport = reflowsToFrame
-    ? { width: frameGeometry.width, height: frameGeometry.height }
-    : {
-        width: metadata.width ?? frameGeometry.width,
-        height: metadata.height ?? frameGeometry.height,
-      };
+  const metadataViewport = {
+    width: metadata?.width ?? frameGeometry.width,
+    height: metadata?.height ?? frameGeometry.height,
+  };
+  // A draw must serialize in the same viewport the content is laid out in.
+  // getScreenPreviewViewport is the source of truth: an inline screen renders at
+  // metadata dims and CSS-scales when the frame's aspect matches, but reflows to
+  // the frame when it differs (so the metadata 1280×2560 default no longer
+  // stretches shapes on a non-portrait frame). Fixed-viewport sources
+  // (localhost/fusion) always use their own metadata viewport.
+  const isInline = !metadata || metadata.source === "inline";
+  const previewViewport = getScreenPreviewViewport(metadataViewport, {
+    width: frameGeometry.width,
+    height: frameGeometry.height,
+  });
+  const viewport = isInline
+    ? {
+        width: previewViewport.viewportWidth,
+        height: previewViewport.viewportHeight,
+      }
+    : metadataViewport;
   const scaleX = viewport.width / Math.max(1, frameGeometry.width);
   const scaleY = viewport.height / Math.max(1, frameGeometry.height);
   const roundLocal = (value: number) => Math.round(value) || 0;

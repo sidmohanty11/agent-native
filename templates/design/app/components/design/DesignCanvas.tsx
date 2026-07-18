@@ -61,7 +61,6 @@ import { shaderRuntimeBridgeScript } from "../../../.generated/bridge/shader-run
 import { tweakBridgeScript } from "../../../.generated/bridge/tweak.generated";
 import { zoomBridgeScript } from "../../../.generated/bridge/zoom.generated";
 import { isTrustedCanvasBridgeMessage } from "./bridge-security";
-import { dndHostLog } from "./dnd-debug";
 import { captureAnnotatedScreenshot } from "./design-canvas/annotation-snapshot";
 import { submitDesignAnnotations } from "./design-canvas/annotation-submit";
 import {
@@ -107,6 +106,7 @@ import {
   schedulePendingTextEditActivation,
 } from "./design-canvas/pending-text-edit";
 import { DeviceFrame } from "./DeviceFrame";
+import { dndHostLog } from "./dnd-debug";
 import { shapeClosingHandles } from "./multi-screen/draft-primitives";
 import type {
   ElementInfo,

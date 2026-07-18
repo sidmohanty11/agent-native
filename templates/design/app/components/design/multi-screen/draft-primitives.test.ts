@@ -71,4 +71,40 @@ describe("draftPrimitiveToInsert draw scaling", () => {
     expect(result.geometry.width).toBe(200);
     expect(result.geometry.height).toBe(100);
   });
+
+  it("scales the draw for a K-scaled inline screen (frame matches the metadata aspect but is larger)", () => {
+    // A resized-with-aspect inline screen scales its content instead of
+    // reflowing, so the draw maps through the metadata scale, not 1:1.
+    const resizedFrame = frame(0, 0, 892, 748); // 2× natural, same aspect
+    const draft = rectDraft({ x: 0, y: 0, width: 446, height: 374 });
+    const natural = {
+      source: "inline",
+      previewState: "preview",
+      width: 446,
+      height: 374,
+    } as ResolvedScreenMetadata;
+
+    const result = draftPrimitiveToInsert(draft, resizedFrame, natural);
+
+    // scaleX = 446/892 = 0.5, scaleY = 374/748 = 0.5.
+    expect(result.geometry.width).toBe(223);
+    expect(result.geometry.height).toBe(187);
+  });
+
+  it("scales the draw for a '+'-added inline screen carrying the 1280×2560 default at a matching aspect", () => {
+    const portraitFrame = frame(0, 0, 640, 1280); // aspect 0.5 matches the default
+    const draft = rectDraft({ x: 0, y: 0, width: 320, height: 640 });
+    const defaultMeta = {
+      source: "inline",
+      previewState: "preview",
+      width: 1280,
+      height: 2560,
+    } as ResolvedScreenMetadata;
+
+    const result = draftPrimitiveToInsert(draft, portraitFrame, defaultMeta);
+
+    // scaleX = 1280/640 = 2, scaleY = 2560/1280 = 2.
+    expect(result.geometry.width).toBe(640);
+    expect(result.geometry.height).toBe(1280);
+  });
 });

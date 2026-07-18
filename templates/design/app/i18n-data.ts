@@ -1145,6 +1145,8 @@ const enUS = {
     escToExit: "Esc to exit",
     tellAgentWhatToChange: "Tell the agent what to change…",
     changesSaveWhenReconnected: "Changes will save when reconnected",
+    changesDiscarded:
+      "Some changes couldn't be saved because the file no longer exists and were discarded.",
     offline: "Offline",
     saving: "Saving...",
     clearedAllAnnotations: "Cleared all annotations",

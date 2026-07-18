@@ -48,8 +48,11 @@ export interface DrainDesignSaveOutboxResult {
 export function isTerminalSaveError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const candidate = error as { status?: unknown; message?: unknown };
-  if (candidate.status === 404) return true;
+  // Terminal only when an explicit 404 ALSO names a missing file. A bare 404 can
+  // be a transient route-not-found (e.g. a cold-start action route), so both
+  // signals are required — dropping an edit is unrecoverable, a retry is not.
   return (
+    candidate.status === 404 &&
     typeof candidate.message === "string" &&
     /file not found/i.test(candidate.message)
   );

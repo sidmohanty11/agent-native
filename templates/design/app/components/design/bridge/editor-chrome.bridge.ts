@@ -85,11 +85,8 @@ declare var __LIVE_REFLOW_ENABLED__: boolean;
   // console reads as a narrated timeline of ONE gesture:
   //   start:* → target → lift/reflow → commit:* → post:* → ack:*
   // The iframe posts these to its own console; the host mirrors its side
-  // under the same prefix. Toggle at runtime from the iframe console with
-  // `window.__DND_DEBUG = false` — no rebuild needed.
-  if ((window as any).__DND_DEBUG === undefined) {
-    (window as any).__DND_DEBUG = true;
-  }
+  // under the same prefix. Defaults OFF; opt in at runtime from the iframe
+  // console with `window.__DND_DEBUG = true` — no rebuild needed.
   function dndLog(phase: string, data?: unknown): void {
     if (!(window as any).__DND_DEBUG) return;
     try {
@@ -8357,9 +8354,18 @@ declare var __LIVE_REFLOW_ENABLED__: boolean;
       };
       // Transform-only follow: must be cleared before any pointer-up commit
       // reads getBoundingClientRect, or the drag delta corrupts the result.
+      function authoredTransformOf(el: HTMLElement): string {
+        // The element's own transform to compose the drag translate WITH: inline
+        // if set, else the class/stylesheet value so a drag never wipes an
+        // authored rotate/scale. "none" → "" so we don't emit an identity.
+        if (el.style.transform) return el.style.transform;
+        var computed = window.getComputedStyle(el).transform;
+        return computed && computed !== "none" ? computed : "";
+      }
       var reorderLiftedMembers: {
         el: HTMLElement;
         prevTransform: string;
+        authoredTransform: string;
         prevTransition: string;
         prevZIndex: string;
         prevBoxShadow: string;
@@ -8377,6 +8383,7 @@ declare var __LIVE_REFLOW_ENABLED__: boolean;
             snap = {
               el: el,
               prevTransform: el.style.transform,
+              authoredTransform: authoredTransformOf(el),
               prevTransition: el.style.transition,
               prevZIndex: el.style.zIndex,
               prevBoxShadow: el.style.boxShadow,
@@ -8392,10 +8399,17 @@ declare var __LIVE_REFLOW_ENABLED__: boolean;
             // own drop target while following the cursor.
             el.style.pointerEvents = "none";
           }
-          // Compose with any pre-existing inline transform (prototype HTML is
-          // user content and may define its own) rather than clobbering it.
-          var base = snap.prevTransform ? snap.prevTransform + " " : "";
-          el.style.transform = base + "translate(" + dx + "px, " + dy + "px)";
+          // Translate FIRST so movement is in screen space (an authored rotate
+          // would otherwise send the drag off-axis), composed with the element's
+          // own transform (inline OR class/stylesheet) so the drag never wipes
+          // it.
+          el.style.transform =
+            "translate(" +
+            dx +
+            "px, " +
+            dy +
+            "px)" +
+            (snap.authoredTransform ? " " + snap.authoredTransform : "");
         });
       }
       function clearReorderLift(): void {
@@ -8422,6 +8436,7 @@ declare var __LIVE_REFLOW_ENABLED__: boolean;
       var reflowSiblings: {
         el: HTMLElement;
         prevTransform: string;
+        authoredTransform: string;
         prevTransition: string;
       }[] = [];
       var reflowKey: string | null = null;
@@ -8511,7 +8526,17 @@ declare var __LIVE_REFLOW_ENABLED__: boolean;
         }
         if (ev && (ev.metaKey || ev.ctrlKey)) return target;
         var container = dropContainerForTarget(target);
-        if (!container || container === reorderEl) return target;
+        // Never treat the screen root (body/html) as a too-small container: the
+        // before/after fallback would reparent to documentElement and insert a
+        // full-size layer as a sibling of <body>. Guard nested frames only.
+        if (
+          !container ||
+          container === reorderEl ||
+          container === document.body ||
+          container === document.documentElement
+        ) {
+          return target;
+        }
         var crect = container.getBoundingClientRect();
         var drect = (reorderEl as HTMLElement).getBoundingClientRect();
         if (crect.width >= drect.width && crect.height >= drect.height) {
@@ -8648,16 +8673,25 @@ declare var __LIVE_REFLOW_ENABLED__: boolean;
           if (i === originIndex) continue;
           var el = real[i] as HTMLElement;
           var prevTransform = el.style.transform;
+          var authoredTransform = authoredTransformOf(el);
           reflowSiblings.push({
             el: el,
             prevTransform: prevTransform,
+            authoredTransform: authoredTransform,
             prevTransition: el.style.transition,
           });
           el.style.transition = "transform 140ms cubic-bezier(0.2, 0, 0, 1)";
-          var base = prevTransform ? prevTransform + " " : "";
           var tx = axis === "x" ? offsets[i] : 0;
           var ty = axis === "y" ? offsets[i] : 0;
-          el.style.transform = base + "translate(" + tx + "px, " + ty + "px)";
+          // Translate FIRST (screen space) composed with the sibling's own
+          // transform so an authored rotate/scale survives the reflow shift.
+          el.style.transform =
+            "translate(" +
+            tx +
+            "px, " +
+            ty +
+            "px)" +
+            (authoredTransform ? " " + authoredTransform : "");
         }
       }
       function onReorderMove(ev) {

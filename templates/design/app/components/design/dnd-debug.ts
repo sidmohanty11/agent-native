@@ -3,10 +3,10 @@
 // end-to-end across the prototype iframe and the parent React app.
 //
 // The iframe and the host are separate windows, so each has its OWN toggle:
-//   • bridge (in the iframe console):  window.__DND_DEBUG = false
-//   • host   (in the top-frame console): window.__DND_DEBUG = false
-// Both default ON. Host lines are cyan and prefixed [dnd:host:*]; bridge
-// lines are purple and prefixed [dnd:*].
+//   • bridge (in the iframe console):  window.__DND_DEBUG = true
+//   • host   (in the top-frame console): window.__DND_DEBUG = true
+// Both default OFF (opt in at runtime). Host lines are cyan and prefixed
+// [dnd:host:*]; bridge lines are purple and prefixed [dnd:*].
 declare global {
   interface Window {
     __DND_DEBUG?: boolean;
@@ -15,7 +15,6 @@ declare global {
 
 export function dndHostLog(phase: string, data?: unknown): void {
   if (typeof window === "undefined") return;
-  if (window.__DND_DEBUG === undefined) window.__DND_DEBUG = true;
   if (!window.__DND_DEBUG) return;
   try {
     const tag = `%c[dnd:host:${phase}]`;

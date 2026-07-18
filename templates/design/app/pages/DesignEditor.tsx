@@ -3966,6 +3966,12 @@ function DesignEditor() {
     });
   }, [t]);
 
+  const warnChangesDiscarded = useCallback(() => {
+    toast.error(t("visualEditor.changesDiscarded"), {
+      id: "design-save-outbox-discarded",
+    });
+  }, [t]);
+
   const journalOutboxEntry = useCallback(
     async (entry: DesignSaveOutboxEntry) => {
       try {
@@ -4009,12 +4015,21 @@ function DesignEditor() {
       if (result.failed.length > 0 && navigator.onLine === false) {
         warnChangesWillRetry();
       }
+      if (result.dropped.length > 0) {
+        warnChangesDiscarded();
+      }
     } catch (error) {
       if (classifyDesignSaveFailure(error, navigator.onLine) === "offline") {
         warnChangesWillRetry();
       }
     }
-  }, [designSaveActorScope, id, queryClient, warnChangesWillRetry]);
+  }, [
+    designSaveActorScope,
+    id,
+    queryClient,
+    warnChangesWillRetry,
+    warnChangesDiscarded,
+  ]);
 
   useEffect(() => {
     const handleRetryOpportunity = () => void retryDesignSaveOutbox();
