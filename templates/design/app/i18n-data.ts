@@ -5403,6 +5403,7 @@ const designRawLiteralOverrides = {
       escToExit: "Esc 退出",
       tellAgentWhatToChange: "告诉代理要更改什么...",
       changesSaveWhenReconnected: "重新连接时将保存更改",
+      changesDiscarded: "部分更改因文件不存在而无法保存，已被丢弃。",
       offline: "离线",
       saving: "正在保存...",
       clearedAllAnnotations: "已清除所有批注",
@@ -5563,6 +5564,8 @@ const designRawLiteralOverrides = {
       tellAgentWhatToChange: "Dígale al agente qué cambiar...",
       changesSaveWhenReconnected:
         "Los cambios se guardarán cuando se vuelva a conectar",
+      changesDiscarded:
+        "Algunos cambios no se pudieron guardar porque el archivo ya no existe y se descartaron.",
       offline: "Sin conexión",
       saving: "Guardando...",
       clearedAllAnnotations: "Se borraron todas las anotaciones",
@@ -5724,6 +5727,8 @@ const designRawLiteralOverrides = {
       tellAgentWhatToChange: "Dites à l’agent ce qu’il faut changer…",
       changesSaveWhenReconnected:
         "Les modifications seront enregistrées une fois reconnecté",
+      changesDiscarded:
+        "Certaines modifications n’ont pas pu être enregistrées car le fichier n’existe plus et ont été ignorées.",
       offline: "Hors ligne",
       saving: "Enregistrement...",
       clearedAllAnnotations: "Toutes les annotations ont été effacées",
@@ -5886,6 +5891,8 @@ const designRawLiteralOverrides = {
       tellAgentWhatToChange: "Sagen Sie dem Agenten, was er ändern soll ...",
       changesSaveWhenReconnected:
         "Änderungen werden gespeichert, wenn die Verbindung wiederhergestellt wird",
+      changesDiscarded:
+        "Einige Änderungen konnten nicht gespeichert werden, da die Datei nicht mehr existiert, und wurden verworfen.",
       offline: "Offline",
       saving: "Speichern...",
       clearedAllAnnotations: "Alle Anmerkungen gelöscht",
@@ -6044,6 +6051,8 @@ const designRawLiteralOverrides = {
       escToExit: "Esc 終了",
       tellAgentWhatToChange: "何を変更するかをエージェントに伝えてください...",
       changesSaveWhenReconnected: "変更は再接続時に保存されます",
+      changesDiscarded:
+        "ファイルが存在しないため、一部の変更を保存できず破棄しました。",
       offline: "オフライン",
       saving: "保存中...",
       clearedAllAnnotations: "すべての注釈を消去しました",
@@ -6200,6 +6209,8 @@ const designRawLiteralOverrides = {
       escToExit: "Esc 종료",
       tellAgentWhatToChange: "상담사에게 무엇을 변경해야 할지 알려주세요...",
       changesSaveWhenReconnected: "다시 연결되면 변경사항이 저장됩니다.",
+      changesDiscarded:
+        "파일이 더 이상 존재하지 않아 일부 변경사항을 저장하지 못하고 삭제했습니다.",
       offline: "오프라인",
       saving: "저장 중...",
       clearedAllAnnotations: "모든 주석이 지워졌습니다",
@@ -6360,6 +6371,8 @@ const designRawLiteralOverrides = {
       tellAgentWhatToChange: "Diga ao agente o que mudar…",
       changesSaveWhenReconnected:
         "As alterações serão salvas quando reconectadas",
+      changesDiscarded:
+        "Algumas alterações não puderam ser salvas porque o arquivo não existe mais e foram descartadas.",
       offline: "Off-line",
       saving: "Salvando...",
       clearedAllAnnotations: "Todas as anotações foram limpas",
@@ -6517,6 +6530,8 @@ const designRawLiteralOverrides = {
       escToExit: "बाहर निकलने के लिए Esc",
       tellAgentWhatToChange: "एजेंट को बताएं कि क्या बदलना है...",
       changesSaveWhenReconnected: "पुन: कनेक्ट होने पर परिवर्तन सहेजे जाएंगे",
+      changesDiscarded:
+        "कुछ परिवर्तन सहेजे नहीं जा सके क्योंकि फ़ाइल अब मौजूद नहीं है, और उन्हें छोड़ दिया गया।",
       offline: "ऑफ़लाइन",
       saving: "सहेजा जा रहा है...",
       clearedAllAnnotations: "सभी एनोटेशन साफ़ किए गए",
@@ -6673,6 +6688,8 @@ const designRawLiteralOverrides = {
       escToExit: "Esc للخروج",
       tellAgentWhatToChange: "أخبر الوكيل بما يجب تغييره...",
       changesSaveWhenReconnected: "سيتم حفظ التغييرات عند إعادة الاتصال",
+      changesDiscarded:
+        "تعذّر حفظ بعض التغييرات لأن الملف لم يعد موجودًا، وتم تجاهلها.",
       offline: "غير متصل",
       saving: "جارٍ الحفظ...",
       clearedAllAnnotations: "تم مسح جميع التعليقات التوضيحية",
