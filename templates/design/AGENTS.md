@@ -118,9 +118,12 @@ ladder.
   `figmeta.selectedNodeData`; `import-figma-clipboard` uses those before any
   heuristic matching and supports multi-selection. Clipboard metadata is not a
   public Figma contract, so a copied frame link remains the stable exact path
-  if Figma changes that field. Without a token, current Figma's binary-only
-  clipboard has no browser-readable HTML fallback; give setup guidance instead
-  of claiming a successful import.
+  if Figma changes that field. Without a token, `import-figma-clipboard` falls
+  back to a local Kiwi binary decode: geometry, auto-layout, text, solid fills,
+  and strokes are editable immediately; image fills become annotated placeholders
+  that can be filled in later with `hydrate-figma-paste-images` once a Figma
+  access token is connected. This is not a full-fidelity import — report which
+  image fills are still unresolved and offer to hydrate them.
 - For "what's in this Figma file/frame?" or "show me a screenshot of this
   frame" without importing anything, use `get-figma-design-context` — no
   `nodeId` lists pages/top-level frames (like the official Figma MCP's

@@ -231,6 +231,7 @@ import { sanitizeLocalhostSourceSnapshotHtml } from "@/components/design/design-
 import type {
   IframeContextMenuPayload,
   IframeHotkeyPayload,
+  IframeImagePastePayload,
 } from "@/components/design/design-canvas/iframe-events";
 import type { MotionTrackWire } from "@/components/design/design-canvas/motion-types";
 import { DesignCanvas } from "@/components/design/DesignCanvas";
@@ -241,6 +242,7 @@ import {
   type DesignExtensionSlotContext,
 } from "@/components/design/DesignExtensionsPanel";
 import { DesignImportPanel } from "@/components/design/DesignImportPanel";
+import { FigmaHydrationDialog } from "@/components/design/FigmaHydrationDialog";
 import { nextTextDecorationLineValue } from "@/components/design/edit-panel/typography-helpers";
 import {
   EditPanel,
@@ -3323,6 +3325,9 @@ function DesignEditor() {
   const pngExportingRef = useRef(false);
   const figmaSvgExportingRef = useRef(false);
   const figmaPasteImportingRef = useRef(false);
+  const [figmaHydrationOpen, setFigmaHydrationOpen] = useState(false);
+  const [figmaHydrationFileIds, setFigmaHydrationFileIds] = useState<string[]>([]);
+  const [figmaHydrationImageCount, setFigmaHydrationImageCount] = useState(0);
   const generateBtnRef = useRef<HTMLButtonElement | null>(null);
   const promptAnchorRef = useRef<HTMLElement | null>(null);
   const tweakPromptAnchorRef = useRef<HTMLElement | null>(null);
@@ -15640,12 +15645,30 @@ function DesignEditor() {
             ? t("designEditor.import.figmaPasteRestLabel")
             : result?.strategy === "htmlFallback"
               ? t("designEditor.import.figmaPasteHtmlLabel")
-              : undefined;
+              : result?.strategy === "localKiwi"
+                ? t("designEditor.import.figmaPasteLocalKiwiLabel")
+                : undefined;
         toast.success(
           importResultSummary(result, t("designEditor.import.figmaSuccess")),
           figmaStrategyLabel ? { description: figmaStrategyLabel } : undefined,
         );
-        if (result?.figmaApiKeyMissing) {
+        if (
+          result?.strategy === "localKiwi" &&
+          (result?.unresolvedImages ?? 0) > 0 &&
+          result?.files?.length
+        ) {
+          const count = result.unresolvedImages!;
+          const fileIds = result.files.map((f) => f.id);
+          setFigmaHydrationFileIds(fileIds);
+          setFigmaHydrationImageCount(count);
+          setFigmaHydrationOpen(true);
+          toast.info(
+            t("designEditor.import.figmaPasteImagesNeedToken", {
+              count,
+              plural: count === 1 ? "" : "s",
+            }),
+          );
+        } else if (result?.figmaApiKeyMissing) {
           toast.info(t("designEditor.import.figmaPasteApiKeyHint"));
         } else if (
           result?.strategy === "htmlFallback" &&
@@ -15884,6 +15907,20 @@ function DesignEditor() {
       uploadImageFileForHtml,
       zoom,
     ],
+  );
+
+  const handleCanvasImagePaste = useCallback(
+    ({ files }: IframeImagePastePayload) => {
+      if (files.length === 0 || !canEditDesign) return;
+      const fileObjects = files.map(({ dataUrl, type, name }) => {
+        const comma = dataUrl.indexOf(",");
+        const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+        const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+        return new File([new Blob([bytes], { type })], name || "pasted-image.png", { type });
+      });
+      handlePastedImageFiles(fileObjects);
+    },
+    [canEditDesign, handlePastedImageFiles],
   );
 
   // OS-file-drop (contract 13): MultiScreenCanvas's `onDropFiles` reports a
@@ -27251,6 +27288,7 @@ function DesignEditor() {
           }}
           onIframeHotkey={handleIframeHotkey}
           onFigmaClipboardPaste={handleCanvasFigmaClipboardPaste}
+          onImagePaste={handleCanvasImagePaste}
           onIframeContextMenu={handleIframeContextMenu}
           onVisualStyleChange={(selector, styles, info, metadata) => {
             activateResponsiveScope();
@@ -27373,6 +27411,7 @@ function DesignEditor() {
       handleScreenElementClear,
       handleIframeHotkey,
       handleCanvasFigmaClipboardPaste,
+      handleCanvasImagePaste,
       handleIframeContextMenu,
       handleScreenVisualStyleChange,
       handleScreenVisualStructureChange,
@@ -29446,6 +29485,7 @@ function DesignEditor() {
                         onBoardFigmaClipboardPaste={
                           handleCanvasFigmaClipboardPaste
                         }
+                        onBoardImagePaste={handleCanvasImagePaste}
                         onBoardIframeContextMenu={handleIframeContextMenu}
                         onBoardTextEditingStateChange={
                           handleBoardTextEditingStateChange
@@ -29674,6 +29714,7 @@ function DesignEditor() {
                         }}
                         onIframeHotkey={handleIframeHotkey}
                         onFigmaClipboardPaste={handleCanvasFigmaClipboardPaste}
+                        onImagePaste={handleCanvasImagePaste}
                         onIframeContextMenu={handleIframeContextMenu}
                         onVisualStyleChange={handleVisualStyleChange}
                         onVisualStructureChange={handleVisualStructureChange}
@@ -30087,6 +30128,16 @@ function DesignEditor() {
           if (!open) setAutoLayoutSuggestionPreview(null);
         }}
         onApply={handleApplyAutoLayoutSuggestion}
+      />
+
+      <FigmaHydrationDialog
+        open={figmaHydrationOpen}
+        onOpenChange={setFigmaHydrationOpen}
+        fileIds={figmaHydrationFileIds}
+        imageCount={figmaHydrationImageCount}
+        onHydrated={() => {
+          void queryClient.invalidateQueries({ queryKey: ["action"] });
+        }}
       />
 
       <AlertDialog open={pendingScreenDeletion !== null}>

@@ -36,7 +36,6 @@ const MAX_FIGMA_IMAGE_BYTES = 15 * 1024 * 1024;
 const MAX_TOTAL_FIGMA_IMAGE_BYTES = 64 * 1024 * 1024;
 const MAX_FIGMA_IMAGE_REFERENCES = 256;
 const MAX_FIGMA_IMAGE_IDS_PER_REQUEST = 50;
-const MAX_FIGMA_IMAGE_IDS_QUERY_CHARS = 1_800;
 const MAX_CONCURRENT_FIGMA_IMAGE_UPLOADS = 4;
 const FIGMA_IMAGE_FETCH_TIMEOUT_MS = 20_000;
 const FIGMA_IMAGE_MIME_TYPES = new Map([
@@ -415,6 +414,7 @@ type FigmaProviderEnvelope = {
     ok?: boolean;
     status?: number;
     statusText?: string;
+    headers?: Record<string, string>;
     json?: unknown;
     text?: string;
     truncated?: boolean;
@@ -431,11 +431,19 @@ export function providerJson(envelope: unknown, label: string): unknown {
     );
   }
   if (response.ok === false) {
+    const jsonBody = response.json as { message?: string; error?: string } | null;
     const detail =
       (typeof response.text === "string" && response.text.trim()) ||
+      (typeof jsonBody?.message === "string" && jsonBody.message) ||
       response.statusText ||
       `HTTP ${response.status ?? "error"}`;
-    throw new Error(`Figma ${label} request failed: ${detail}`);
+    const err = new Error(`Figma ${label} request failed: ${detail}`);
+    const retryAfterHeader = response.headers?.["retry-after"];
+    if (response.status === 429 && retryAfterHeader) {
+      (err as Error & { retryAfterSeconds: number }).retryAfterSeconds =
+        parseInt(retryAfterHeader, 10);
+    }
+    throw err;
   }
   return response.json;
 }
@@ -567,46 +575,18 @@ async function fetchFallbackImageUrls(
   nodeIds: string[],
 ): Promise<Record<string, string>> {
   if (nodeIds.length === 0) return {};
-  const batches: string[][] = [];
-  let batch: string[] = [];
-  let queryChars = 0;
-  for (const nodeId of nodeIds) {
-    if (nodeId.length > MAX_FIGMA_IMAGE_IDS_QUERY_CHARS) {
-      throw new Error("A Figma image fallback node id was unexpectedly long.");
-    }
-    const addedChars = nodeId.length + (batch.length > 0 ? 1 : 0);
-    if (
-      batch.length >= MAX_FIGMA_IMAGE_IDS_PER_REQUEST ||
-      queryChars + addedChars > MAX_FIGMA_IMAGE_IDS_QUERY_CHARS
-    ) {
-      batches.push(batch);
-      batch = [];
-      queryChars = 0;
-    }
-    batch.push(nodeId);
-    queryChars += nodeId.length + (batch.length > 1 ? 1 : 0);
-  }
-  if (batch.length > 0) batches.push(batch);
-
-  const responses = await mapWithConcurrency(
-    batches,
-    MAX_CONCURRENT_FIGMA_IMAGE_UPLOADS,
-    async (ids) => {
-      const envelope = await figmaGet(`/images/${fileKey}`, {
-        ids: ids.join(","),
-        format: "png",
-        scale: 2,
-      });
-      return providerJson(envelope, "images") as {
-        images?: Record<string, string | null | undefined>;
-      };
-    },
-  );
+  const ids = nodeIds.slice(0, MAX_FIGMA_IMAGE_IDS_PER_REQUEST);
+  const envelope = await figmaGet(`/images/${fileKey}`, {
+    ids: ids.join(","),
+    format: "png",
+    scale: 2,
+  });
+  const json = providerJson(envelope, "images") as {
+    images?: Record<string, string | null | undefined>;
+  };
   const result: Record<string, string> = {};
-  for (const response of responses) {
-    for (const [id, url] of Object.entries(response.images ?? {})) {
-      if (typeof url === "string" && url) result[id] = url;
-    }
+  for (const [id, url] of Object.entries(json.images ?? {})) {
+    if (typeof url === "string" && url) result[id] = url;
   }
   return result;
 }
@@ -624,6 +604,34 @@ async function fetchImageFillUrls(
   for (const ref of imageRefs) {
     const url = json.images?.[ref];
     if (typeof url === "string" && url) result[ref] = url;
+  }
+  return result;
+}
+
+/**
+ * Fetch CDN URLs for the given image-fill hex hashes via Figma's
+ * `/files/:key/images` endpoint, then mirror them to durable storage.
+ * Returns a Map from hex hash to durable URL. Hashes that Figma cannot
+ * resolve (deleted images, permission gaps) are omitted from the result.
+ *
+ * Used by `hydrate-figma-paste-images` to fill in `about:blank` placeholders
+ * that the local-kiwi clipboard decode path leaves behind.
+ */
+export async function resolveImageFillRefs(
+  fileKey: string,
+  hexHashes: string[],
+): Promise<Map<string, string>> {
+  if (hexHashes.length === 0) return new Map();
+  const cdnUrls = await fetchImageFillUrls(fileKey, hexHashes);
+  const cdnUrlList = Object.values(cdnUrls).filter(
+    (u): u is string => typeof u === "string" && u.length > 0,
+  );
+  if (cdnUrlList.length === 0) return new Map();
+  const durableMap = await mirrorFigmaImageUrls(cdnUrlList);
+  const result = new Map<string, string>();
+  for (const [hash, cdnUrl] of Object.entries(cdnUrls)) {
+    const durableUrl = durableMap.get(cdnUrl);
+    if (durableUrl) result.set(hash, durableUrl);
   }
   return result;
 }
@@ -673,7 +681,7 @@ export async function buildScreenFilesFromFigmaNodes(
     source?: (nodeId: string, node: FigmaNode) => Record<string, unknown>;
     sourceLabel?: (nodeId: string, node: FigmaNode) => string;
   } = {},
-): Promise<{ files: ImportedDesignFile[]; fidelityEntries: FidelityEntry[] }> {
+): Promise<{ files: ImportedDesignFile[]; fidelityEntries: FidelityEntry[]; missingImageFillCount: number }> {
   const entries = Object.entries(nodesById);
   const fallbackNodeIds = new Set<string>();
   const imageFillRefs = new Set<string>();
@@ -696,16 +704,16 @@ export async function buildScreenFilesFromFigmaNodes(
     (nodeId) => !fallbackImageUrls[nodeId],
   );
   if (missingFallbackNodeIds.length > 0) {
-    throw new Error(
-      `Figma could not render ${missingFallbackNodeIds.length} required fallback layer${missingFallbackNodeIds.length === 1 ? "" : "s"} (${missingFallbackNodeIds.slice(0, 5).join(", ")}${missingFallbackNodeIds.length > 5 ? ", …" : ""}). Nothing was imported so the design would not silently lose visible content. Try a smaller selection or retry the import.`,
+    console.warn(
+      `[figma-import] ${missingFallbackNodeIds.length} fallback layer(s) could not be rendered and will be omitted (${missingFallbackNodeIds.slice(0, 5).join(", ")}${missingFallbackNodeIds.length > 5 ? ", …" : ""}).`,
     );
   }
   const missingImageFillRefs = Array.from(imageFillRefs).filter(
     (imageRef) => !imageFillUrls[imageRef],
   );
   if (missingImageFillRefs.length > 0) {
-    throw new Error(
-      `Figma did not return ${missingImageFillRefs.length} required image fill${missingImageFillRefs.length === 1 ? "" : "s"}. Nothing was imported so the design would not silently omit imagery. Retry the import or export the affected frame from Figma.`,
+    console.warn(
+      `[figma-import] ${missingImageFillRefs.length} image fill ref(s) could not be resolved (likely from a component library file); those fills will be omitted.`,
     );
   }
   const durableUrls = await mirrorFigmaImageUrls([
@@ -763,5 +771,6 @@ export async function buildScreenFilesFromFigmaNodes(
     });
   }
 
-  return { files, fidelityEntries };
+  const finalMissingCount = missingImageFillRefs.filter((r) => !imageFillUrls[r]).length;
+  return { files, fidelityEntries, missingImageFillCount: finalMissingCount };
 }

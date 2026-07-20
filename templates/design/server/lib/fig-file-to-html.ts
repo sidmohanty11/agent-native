@@ -1381,6 +1381,10 @@ interface Ctx {
   /** Hex hash -> on-disk filename (e.g. `<hash>` or `<hash>.png`). */
   imageMap: Map<string, string>;
   missingImageUrl?: string;
+  /** When true, per-node IMAGE fills with no imageMap entry emit data-figma-image-ref. */
+  trackUnresolvedImageRefs?: boolean;
+  /** Populated by buildAttrs() when trackUnresolvedImageRefs is true. */
+  unresolvedImageRefs?: Set<string>;
   /**
    * Set of `family|weight|italic` triples seen while emitting the current
    * frame. We use it to build a Google Fonts <link> in <head> so the custom
@@ -1665,6 +1669,23 @@ function buildAttrs(
   if (Object.keys(css).length > 0) {
     attrs.push(`style="${escapeHtmlAttr(formatStyleString(css))}"`);
   }
+
+  // Stamp data-figma-image-ref on elements whose IMAGE fills have no imageMap
+  // entry. The sentinel placeholder URLs in the style (written by imageUrl())
+  // can then be swapped for real URLs by hydrate-figma-paste-images without a
+  // full re-render. Only active when the caller opts in via trackUnresolvedImageRefs.
+  if (ctx.trackUnresolvedImageRefs) {
+    const unresolvedHashes = (effectiveFillPaints(node, ctx) ?? [])
+      .filter((p) => p.visible !== false && p.type === "IMAGE")
+      .map((p) => hashToHex(p.image?.hash))
+      .filter((h): h is string => h !== null && !ctx.imageMap.has(h));
+    if (unresolvedHashes.length > 0) {
+      const joined = unresolvedHashes.join(" ");
+      attrs.push(`data-figma-image-ref="${escapeHtmlAttr(joined)}"`);
+      for (const h of unresolvedHashes) ctx.unresolvedImageRefs?.add(h);
+    }
+  }
+
   return attrs;
 }
 
@@ -2184,6 +2205,8 @@ export interface RenderHtmlResult {
   pageCount: number;
   frameCount: number;
   frames: RenderedFrame[];
+  /** Populated when `trackUnresolvedImageRefs` is true in RenderHtmlOptions. */
+  unresolvedImageRefs?: Set<string>;
 }
 
 export interface RenderHtmlOptions {
@@ -2193,6 +2216,13 @@ export interface RenderHtmlOptions {
   imageMap?: Map<string, string>;
   /** Safe URL used when an embedded image was omitted (for example no storage provider). */
   missingImageUrl?: string;
+  /**
+   * When true, any node whose IMAGE fill hash is absent from `imageMap` gets a
+   * `data-figma-image-ref="<hexHash>"` attribute stamped on its rendered element.
+   * The collected set is returned as `unresolvedImageRefs` in the result so
+   * callers know which hashes need retroactive resolution.
+   */
+  trackUnresolvedImageRefs?: boolean;
   /*** Optional set of page (CANVAS) and/or frame GUID keys */
   selection?: Set<string>;
   maxFrames?: number;
@@ -2485,6 +2515,8 @@ export function renderHtmlTemplates(
     blobs,
     imageMap: options.imageMap ?? new Map<string, string>(),
     missingImageUrl: options.missingImageUrl,
+    trackUnresolvedImageRefs: options.trackUnresolvedImageRefs,
+    unresolvedImageRefs: options.trackUnresolvedImageRefs ? new Set<string>() : undefined,
     fontUsage: new Set(),
     inliningStack: new Set(),
     renderedNodeCount: 0,
@@ -2564,5 +2596,8 @@ export function renderHtmlTemplates(
     pageCount: pages.length,
     frameCount: frames.length,
     frames,
+    ...(ctx.unresolvedImageRefs !== undefined
+      ? { unresolvedImageRefs: ctx.unresolvedImageRefs }
+      : {}),
   };
 }

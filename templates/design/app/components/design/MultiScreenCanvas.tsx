@@ -449,6 +449,7 @@ export const MultiScreenCanvas = memo(function MultiScreenCanvas({
   onBoardElementDblClickText,
   onBoardIframeHotkey,
   onBoardFigmaClipboardPaste,
+  onBoardImagePaste,
   onBoardIframeContextMenu,
   onBoardTextEditingStateChange,
   boardClearSelectionRequest,
@@ -7580,6 +7581,7 @@ export const MultiScreenCanvas = memo(function MultiScreenCanvas({
                   onClearSelection={onBoardElementClear}
                   onIframeHotkey={onBoardIframeHotkey}
                   onFigmaClipboardPaste={onBoardFigmaClipboardPaste}
+                  onImagePaste={onBoardImagePaste}
                   onIframeContextMenu={onBoardIframeContextMenu}
                   onVisualStructureChange={onBoardVisualStructureChange}
                   onVisualStyleChange={onBoardVisualStyleChange}

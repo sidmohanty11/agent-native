@@ -27,9 +27,11 @@ export interface ImportResult {
   warnings?: string[];
   error?: string;
   /** Set by import-figma-clipboard: which path actually produced the screen(s). */
-  strategy?: "restNodes" | "htmlFallback";
+  strategy?: "restNodes" | "htmlFallback" | "localKiwi";
   /** Set by import-figma-clipboard when it fell back because no Figma token is configured. */
   figmaApiKeyMissing?: boolean;
+  /** Set by import-figma-clipboard when strategy is "localKiwi": number of IMAGE fills that couldn't be resolved without a Figma token. */
+  unresolvedImages?: number;
   /** Set by import-figma-clipboard when it fell back: why the REST match didn't happen. */
   matchStatus?: "matched" | "ambiguous" | "none" | "error";
   fidelityReport?: FigmaFidelityReport;

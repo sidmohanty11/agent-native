@@ -97,6 +97,7 @@ import type {
   IframeContextMenuPayload,
   IframeFigmaClipboardPastePayload,
   IframeHotkeyPayload,
+  IframeImagePastePayload,
 } from "./design-canvas/iframe-events";
 import {
   forwardEmbeddedCanvasPanMessage,
@@ -463,6 +464,7 @@ interface DesignCanvasProps {
   onElementDblClickText?: (info: ElementInfo) => void;
   onIframeHotkey?: (event: IframeHotkeyPayload) => void;
   onFigmaClipboardPaste?: (event: IframeFigmaClipboardPastePayload) => void;
+  onImagePaste?: (event: IframeImagePastePayload) => void;
   onIframeContextMenu?: (event: IframeContextMenuPayload) => void;
   onEditorDragStateChange?: (active: boolean) => void;
   onVisualStructureChange?: (
@@ -1029,6 +1031,7 @@ export function DesignCanvas({
   onElementDblClickText,
   onIframeHotkey,
   onFigmaClipboardPaste,
+  onImagePaste,
   onIframeContextMenu,
   onEditorDragStateChange,
   onVisualStructureChange,
@@ -2655,6 +2658,25 @@ export function DesignCanvas({
         if (content) onFigmaClipboardPaste?.({ content });
         return;
       }
+      if (e.data.type === "canvas-image-paste") {
+        const raw = Array.isArray(e.data.files) ? e.data.files : [];
+        const MAX_IMAGE_PASTE_FILES = 20;
+        const MAX_DATA_URL_BYTES = 20 * 1024 * 1024; // 20 MB per file
+        const files = raw
+          .slice(0, MAX_IMAGE_PASTE_FILES)
+          .filter(
+            (f: unknown): f is { dataUrl: string; type: string; name: string } => {
+              if (!f || typeof f !== "object") return false;
+              const dataUrl = (f as { dataUrl?: unknown }).dataUrl;
+              if (typeof dataUrl !== "string") return false;
+              if (!dataUrl.startsWith("data:image/")) return false;
+              if (dataUrl.length > MAX_DATA_URL_BYTES) return false;
+              return true;
+            },
+          );
+        if (files.length > 0) onImagePaste?.({ files });
+        return;
+      }
       if (e.data.type === "element-contextmenu") {
         const clientX = Number(e.data.clientX);
         const clientY = Number(e.data.clientY);
@@ -2847,6 +2869,7 @@ export function DesignCanvas({
     onElementDblClickText,
     onIframeHotkey,
     onFigmaClipboardPaste,
+    onImagePaste,
     onIframeContextMenu,
     onEditorDragStateChange,
     onVisualStructureChange,
