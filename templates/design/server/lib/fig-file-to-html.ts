@@ -1719,11 +1719,19 @@ function decodePathCommands(bytes: Buffer | undefined): string {
  * Each segment is the cubic P0=vtx[start], P1=P0+tanStart, P2=vtx[end]+tanEnd,
  * P3=vtx[end] (zero tangents → a line); segments chain end→start into subpaths.
  */
-function decodeVectorNetwork(bytes: Buffer | undefined): string {
-  if (!bytes || bytes.length < 16) return "";
+interface DecodedVectorNetwork {
+  d: string;
+  /** End stroke-cap is an arrow/marker type (cap enum ≥ 3; 0/1/2 = none/round/square). */
+  arrowEnd: boolean;
+}
+
+function decodeVectorNetwork(bytes: Buffer | undefined): DecodedVectorNetwork {
+  const empty: DecodedVectorNetwork = { d: "", arrowEnd: false };
+  if (!bytes || bytes.length < 16) return empty;
   const vertexCount = bytes.readUInt32LE(0);
   const segmentCount = bytes.readUInt32LE(4);
-  if (vertexCount > 200_000 || segmentCount > 200_000) return "";
+  if (vertexCount > 200_000 || segmentCount > 200_000) return empty;
+  const arrowEnd = bytes.readUInt32LE(12) >= 3;
 
   const verts: Array<{ x: number; y: number }> = [];
   for (let i = 0; i < vertexCount; i++) {
@@ -1754,7 +1762,7 @@ function decodeVectorNetwork(bytes: Buffer | undefined): string {
       ey: bytes.readFloatLE(o + 20),
     });
   }
-  if (segs.length === 0) return "";
+  if (segs.length === 0) return empty;
 
   const fmt = (n: number) => {
     if (!Number.isFinite(n)) return "0";
@@ -1805,7 +1813,7 @@ function decodeVectorNetwork(bytes: Buffer | undefined): string {
       out.push("Z");
     }
   }
-  return out.join(" ");
+  return { d: out.join(" "), arrowEnd };
 }
 
 /**
@@ -1932,13 +1940,27 @@ function emitSvgBody(
   // fill/stroke. Network coords are in `normalizedSize` space, so scale into
   // the node's box (the SVG viewBox is 0 0 w h).
   if (!emittedFlat && typeof node.vectorData?.vectorNetworkBlob === "number") {
-    const d = decodeVectorNetwork(ctx.blobs[node.vectorData.vectorNetworkBlob]);
-    if (d) {
+    const net = decodeVectorNetwork(
+      ctx.blobs[node.vectorData.vectorNetworkBlob],
+    );
+    if (net.d) {
+      const d = net.d;
       const ns = node.vectorData.normalizedSize;
       const sx = ns && ns.x ? (w || ns.x) / ns.x : 1;
       const sy = ns && ns.y ? (h || ns.y) / ns.y : 1;
       const scaled = Math.abs(sx - 1) > 1e-6 || Math.abs(sy - 1) > 1e-6;
       const inner = scaled ? `${indent}  ` : indent;
+      // Arrow end-cap → SVG `<marker>` (SVG strokes have no arrow linecap). It
+      // scales with stroke width and auto-orients to the path's end direction.
+      const arrowId =
+        net.arrowEnd && strokePaint && strokeWeight > 0
+          ? `ah-${guidKey(node.guid).replace(/[^a-z0-9]/gi, "")}`
+          : null;
+      if (arrowId) {
+        lines.push(
+          `${inner}  <marker id="${arrowId}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse" markerUnits="strokeWidth"><path d="M0 0 L10 5 L0 10 z" fill="${strokePaint!.color}" /></marker>`,
+        );
+      }
       if (scaled)
         lines.push(`${indent}  <g transform="scale(${num(sx)} ${num(sy)})">`);
       if (fillPaint) {
@@ -1960,6 +1982,7 @@ function emitSvgBody(
           `stroke-linejoin="${(node.strokeJoin ?? "ROUND").toLowerCase()}"`,
           `stroke-linecap="${(node.strokeCap ?? "ROUND").toLowerCase()}"`,
         ];
+        if (arrowId) a.push(`marker-start="url(#${arrowId})"`);
         if (strokePaint.opacity !== undefined)
           a.push(`stroke-opacity="${strokePaint.opacity}"`);
         lines.push(`${inner}  <path ${a.join(" ")} />`);

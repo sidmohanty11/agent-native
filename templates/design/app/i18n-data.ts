@@ -592,7 +592,7 @@ const enUS = {
         "{{count}} image{{plural}} need Figma access to load.",
       figmaHydrationDialogTitle: "Fill in the missing images",
       figmaHydrationDialogDescription:
-        "{{count}} image{{plural}} couldn't come through the paste — Figma's clipboard leaves image data out. Fill from the original .fig, or fetch the exact images from the copied frame.",
+        "{{count}} image{{plural}} in the imported screen{{screensPlural}} couldn't come through the paste — Figma's clipboard leaves image data out. Fill from the original .fig, or fetch the exact images from the copied frame.",
       figmaHydrationConnectAndLoad: "Connect & fetch images",
       figmaHydrationSuccess: "Images loaded successfully",
       figmaHydrationSuccessDescription:

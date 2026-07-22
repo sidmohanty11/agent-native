@@ -666,6 +666,20 @@ const messages = {
       figmaHydrationSuccess: "圖片載入成功",
       figmaHydrationSuccessDescription:
         "已從 Figma 填入 {{count}} 個圖片{{plural}}。",
+      figmaHydrationRecommended: "Recommended",
+      figmaHydrationFigTitle: "Have the original .fig file?",
+      figmaHydrationFigOption:
+        "Fastest — pulls every image straight from the file. No token, no rate limits.",
+      figmaHydrationChooseFig: "Fill images from .fig",
+      figmaHydrationOrToken: "Or fetch from Figma",
+      figmaHydrationTokenDescription:
+        'Fetches the exact images from the copied frame\'s Figma file. Needs "File content" and "Current user" scopes; saved securely, never shown in chat.',
+      figmaHydrationRateLimit:
+        "Figma rate-limits its API by seat — Viewer/Collab seats get only a few requests, Dev/Full seats more. If it's cooling down, use the .fig above.",
+      figmaHydrationFigSuccessDescription:
+        "{{count}} image{{plural}} filled in from the .fig file.",
+      figmaHydrationInvalidFig: "Choose a .fig file exported from Figma.",
+      figmaHydrationFigError: "Couldn't read images from that .fig file.",
       figUploadTitle: "上傳 .fig",
       figUploadDescription:
         "本機匯入，不使用 Figma API 配額。包含內嵌圖片。格式可能隨 Figma 版本變更。上限為 50 MB。",

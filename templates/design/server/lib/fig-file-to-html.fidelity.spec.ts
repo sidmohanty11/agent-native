@@ -799,6 +799,61 @@ describe("vector network decode", () => {
     expect(html).toContain("C12 0 10 8 10 10");
     expect(html).toContain('stroke="rgb(0, 255, 255)"');
   });
+
+  it("emits an arrowhead marker when the stroke has an arrow end-cap", () => {
+    // 2 vertices, 1 straight segment; header byte 12 = strokeCap enum 5 (arrow).
+    const buf = Buffer.alloc(64);
+    buf.writeUInt32LE(2, 0); // vertexCount
+    buf.writeUInt32LE(1, 4); // segmentCount
+    buf.writeUInt32LE(5, 12); // strokeCap = arrow
+    buf.writeFloatLE(0, 16);
+    buf.writeFloatLE(0, 20); // v0 (0,0)
+    buf.writeFloatLE(100, 28);
+    buf.writeFloatLE(0, 32); // v1 (100,0)
+    buf.writeUInt32LE(0, 40); // seg v0->v1 (straight)
+    buf.writeUInt32LE(1, 52);
+
+    const doc: Record<string, unknown> = {
+      blobs: [{ bytes: buf }],
+      nodeChanges: [
+        { guid: { sessionID: 1, localID: 1 }, type: "DOCUMENT", name: "D" },
+        {
+          guid: { sessionID: 1, localID: 2 },
+          parentIndex: { guid: { sessionID: 1, localID: 1 }, position: "a" },
+          type: "CANVAS",
+          name: "P",
+        },
+        {
+          guid: { sessionID: 1, localID: 10 },
+          parentIndex: { guid: { sessionID: 1, localID: 2 }, position: "a" },
+          type: "FRAME",
+          name: "F",
+          size: { x: 200, y: 100 },
+          transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+        },
+        {
+          guid: { sessionID: 1, localID: 21 },
+          parentIndex: { guid: { sessionID: 1, localID: 10 }, position: "a" },
+          type: "VECTOR",
+          name: "Connector",
+          size: { x: 100, y: 0 },
+          transform: { m00: 1, m01: 0, m02: 10, m10: 0, m11: 1, m12: 40 },
+          strokeWeight: 2,
+          strokePaints: [
+            { type: "SOLID", visible: true, color: { r: 1, g: 0, b: 1, a: 1 } },
+          ],
+          vectorData: {
+            vectorNetworkBlob: 0,
+            normalizedSize: { x: 100, y: 0 },
+          },
+        },
+      ],
+    };
+    const html = renderFrame(doc);
+    expect(html).toContain("<marker");
+    expect(html).toContain("marker-start=");
+    expect(html).toContain('fill="rgb(255, 0, 255)"'); // arrowhead uses stroke color
+  });
 });
 
 // ---------------------------------------------------------------------------

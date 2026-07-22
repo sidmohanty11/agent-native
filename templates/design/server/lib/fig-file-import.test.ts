@@ -143,7 +143,9 @@ describe("bounded .fig decoding", () => {
     expect(() => decodeKiwiContainer(uncompressedContainer)).toThrow(
       /too many binary chunks/i,
     );
-  });
+    // Building/decoding the 4k-chunk container is CPU-heavy and synchronous, so
+    // it can exceed the 5s default under a loaded parallel test run.
+  }, 20_000);
 
   it("does not compile schema names that could escape kiwi code generation", async () => {
     const unsafeSchema = parseSchema(
