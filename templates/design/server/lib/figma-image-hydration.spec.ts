@@ -67,6 +67,7 @@ vi.mock("../db/index.js", () => ({
 
 import {
   hydrateFileImagesFromFig,
+  indexFigImages,
   resolveFigImageHashes,
 } from "./figma-image-hydration.js";
 
@@ -82,6 +83,37 @@ function figWithImages(images: Array<{ hash: string; ext: string }>): {
   };
 }
 
+// The decode-once index the handler now builds and hands to the resolvers.
+function figImageMap(
+  images: Array<{ hash: string; ext: string }>,
+): Map<string, { hash: string; ext: string; bytes: Buffer }> {
+  const map = new Map<string, { hash: string; ext: string; bytes: Buffer }>();
+  for (const i of images) map.set(i.hash, { ...i, bytes: Buffer.from(i.hash) });
+  return map;
+}
+
+describe("indexFigImages", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("decodes the .fig once and indexes its images by SHA-1 hash", () => {
+    mocks.decodeFig.mockReturnValue(
+      figWithImages([
+        { hash: "aaa", ext: "png" },
+        { hash: "bbb", ext: "jpg" },
+      ]),
+    );
+
+    const index = indexFigImages(FIG_BYTES);
+
+    expect(mocks.decodeFig).toHaveBeenCalledTimes(1);
+    expect(index.size).toBe(2);
+    expect(index.get("aaa")).toMatchObject({ hash: "aaa", ext: "png" });
+    expect(index.get("bbb")).toMatchObject({ hash: "bbb", ext: "jpg" });
+  });
+});
+
 describe("resolveFigImageHashes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -93,15 +125,11 @@ describe("resolveFigImageHashes", () => {
   });
 
   it("uploads only requested hashes present in the .fig and maps them", async () => {
-    mocks.decodeFig.mockReturnValue(
-      figWithImages([
+    const resolved = await resolveFigImageHashes({
+      figImages: figImageMap([
         { hash: "aaa", ext: "png" },
         { hash: "bbb", ext: "jpg" },
       ]),
-    );
-
-    const resolved = await resolveFigImageHashes({
-      figBytes: FIG_BYTES,
       hashes: ["aaa", "ccc"], // ccc is not embedded
       ownerEmail: "user@example.com",
     });
@@ -114,11 +142,8 @@ describe("resolveFigImageHashes", () => {
   });
 
   it("returns an empty map when no requested hash is embedded", async () => {
-    mocks.decodeFig.mockReturnValue(
-      figWithImages([{ hash: "zzz", ext: "png" }]),
-    );
     const resolved = await resolveFigImageHashes({
-      figBytes: FIG_BYTES,
+      figImages: figImageMap([{ hash: "zzz", ext: "png" }]),
       hashes: ["aaa"],
       ownerEmail: "user@example.com",
     });
@@ -127,12 +152,6 @@ describe("resolveFigImageHashes", () => {
   });
 
   it("skips an image whose upload fails without failing the batch", async () => {
-    mocks.decodeFig.mockReturnValue(
-      figWithImages([
-        { hash: "ok1", ext: "png" },
-        { hash: "bad", ext: "png" },
-      ]),
-    );
     mocks.uploadFile.mockImplementation(
       async ({ filename }: { filename: string }) => {
         if (filename.includes("bad")) throw new Error("storage down");
@@ -140,7 +159,10 @@ describe("resolveFigImageHashes", () => {
       },
     );
     const resolved = await resolveFigImageHashes({
-      figBytes: FIG_BYTES,
+      figImages: figImageMap([
+        { hash: "ok1", ext: "png" },
+        { hash: "bad", ext: "png" },
+      ]),
       hashes: ["ok1", "bad"],
       ownerEmail: "user@example.com",
     });
@@ -186,13 +208,9 @@ describe("hydrateFileImagesFromFig", () => {
   });
 
   it("fills a placeholder from the .fig and persists the hydrated HTML", async () => {
-    mocks.decodeFig.mockReturnValue(
-      figWithImages([{ hash: "aaa", ext: "png" }]),
-    );
-
     const result = await hydrateFileImagesFromFig({
       fileId: "file-1",
-      figBytes: FIG_BYTES,
+      figImages: figImageMap([{ hash: "aaa", ext: "png" }]),
       ownerEmail: "user@example.com",
     });
 
@@ -207,13 +225,9 @@ describe("hydrateFileImagesFromFig", () => {
   });
 
   it("does not write when the .fig has none of the referenced images", async () => {
-    mocks.decodeFig.mockReturnValue(
-      figWithImages([{ hash: "zzz", ext: "png" }]),
-    );
-
     const result = await hydrateFileImagesFromFig({
       fileId: "file-1",
-      figBytes: FIG_BYTES,
+      figImages: figImageMap([{ hash: "zzz", ext: "png" }]),
       ownerEmail: "user@example.com",
     });
 
@@ -231,12 +245,12 @@ describe("hydrateFileImagesFromFig", () => {
 
     const result = await hydrateFileImagesFromFig({
       fileId: "file-1",
-      figBytes: FIG_BYTES,
+      figImages: figImageMap([{ hash: "aaa", ext: "png" }]),
       ownerEmail: "user@example.com",
     });
 
     expect(result).toMatchObject({ resolved: 0, missing: 0, skipped: 0 });
-    expect(mocks.decodeFig).not.toHaveBeenCalled();
+    expect(mocks.uploadFile).not.toHaveBeenCalled();
     expect(mocks.writeInlineSourceFile).not.toHaveBeenCalled();
   });
 
@@ -245,7 +259,7 @@ describe("hydrateFileImagesFromFig", () => {
     await expect(
       hydrateFileImagesFromFig({
         fileId: "nope",
-        figBytes: FIG_BYTES,
+        figImages: figImageMap([{ hash: "aaa", ext: "png" }]),
         ownerEmail: "user@example.com",
       }),
     ).rejects.toThrow("File not found");

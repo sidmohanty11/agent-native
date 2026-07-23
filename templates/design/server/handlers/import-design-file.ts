@@ -152,15 +152,17 @@ export const importDesignFile = defineEventHandler(async (event) => {
                 `Too many screens to hydrate at once (max ${MAX_HYDRATE_FILES}).`,
               );
             }
-            const { hydrateFileImagesFromFig } =
+            const { hydrateFileImagesFromFig, indexFigImages } =
               await import("../lib/figma-image-hydration.js");
+            // Decode + index the uploaded .fig once, then reuse across screens.
+            const figImages = indexFigImages(data);
             const results = [];
             let totalResolved = 0;
             let totalMissing = 0;
             for (const fileId of fileIds) {
               const result = await hydrateFileImagesFromFig({
                 fileId,
-                figBytes: data,
+                figImages,
                 ownerEmail: session.email!,
               });
               results.push(result);

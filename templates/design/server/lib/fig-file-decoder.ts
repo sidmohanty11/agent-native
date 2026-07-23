@@ -22,8 +22,12 @@ const MAX_ZIP_ENTRIES = 2_048;
 const MAX_ZIP_NAME_BYTES = 512;
 const MAX_COMPRESSION_RATIO = 1_000;
 const MAX_DECODE_DEPTH = 256;
-const MAX_COLLECTION_LENGTH = 10_000_000;
-const MAX_COLLECTION_ITEMS = 50_000_000;
+// Sized with ~15x headroom over a real 11 MB corpus .fig (~530k objects,
+// ~1.5M items, longest single collection ~7.6k) so genuine files decode while a
+// crafted document still hits a finite total-work ceiling.
+const MAX_DECODED_OBJECTS = 8_000_000;
+const MAX_COLLECTION_LENGTH = 2_000_000;
+const MAX_COLLECTION_ITEMS = 24_000_000;
 const MAX_DECODE_READS = 64 * 1024 * 1024;
 const MAX_SANITIZED_BINARY_BYTES = 32 * 1024 * 1024;
 const MAX_DECODED_STRING_BYTES = 4 * 1024 * 1024;
@@ -412,6 +416,7 @@ function isZip(file: Buffer): boolean {
 // would throw "Invalid string length" for large documents (V8 caps strings at
 // ~512MB).
 interface ObjectBudget {
+  objects: number;
   items: number;
   binaryBytes: number;
   stringBytes: number;
@@ -446,8 +451,10 @@ function sanitizeForJson(
   }
   if (typeof value === "bigint") return value.toString();
   if (Array.isArray(value)) {
+    budget.objects += 1;
     budget.items += value.length;
     if (
+      budget.objects > MAX_DECODED_OBJECTS ||
       value.length > MAX_COLLECTION_LENGTH ||
       budget.items > MAX_COLLECTION_ITEMS
     ) {
@@ -464,6 +471,10 @@ function sanitizeForJson(
     }
   }
   if (value !== null && typeof value === "object") {
+    budget.objects += 1;
+    if (budget.objects > MAX_DECODED_OBJECTS) {
+      throw new Error("Decoded .fig document contains too many objects.");
+    }
     if (budget.active.has(value)) {
       throw new Error("Decoded .fig document contains a cycle.");
     }
@@ -490,6 +501,7 @@ function sanitizeForJson(
 export function assertSafeDecodedFigDocument(value: unknown): void {
   const stack: Array<{ value: unknown; depth: number }> = [{ value, depth: 0 }];
   const seen = new WeakSet<object>();
+  let objects = 0;
   let items = 0;
   let binaryBytes = 0;
   let stringBytes = 0;
@@ -521,6 +533,10 @@ export function assertSafeDecodedFigDocument(value: unknown): void {
       throw new Error("Decoded .fig document contains repeated object cycles.");
     }
     seen.add(current.value);
+    objects += 1;
+    if (objects > MAX_DECODED_OBJECTS) {
+      throw new Error("Decoded .fig document contains too many objects.");
+    }
     const children = Array.isArray(current.value)
       ? current.value
       : Object.values(current.value);
@@ -541,6 +557,7 @@ export function assertSafeDecodedFigDocument(value: unknown): void {
 
 class BudgetByteBuffer extends ByteBuffer {
   private collectionItems = 0;
+  private decodedObjects = 0;
   private decodeDepth = 0;
   private readCount = 0;
 
@@ -565,7 +582,11 @@ class BudgetByteBuffer extends ByteBuffer {
   }
 
   enterDecodedObject(): void {
+    this.decodedObjects += 1;
     this.decodeDepth += 1;
+    if (this.decodedObjects > MAX_DECODED_OBJECTS) {
+      throw new Error(".fig document contains too many decoded objects.");
+    }
     if (this.decodeDepth > MAX_DECODE_DEPTH) {
       throw new Error(".fig document is nested too deeply.");
     }
@@ -719,6 +740,7 @@ function decodeKiwiDocument(
     const document = decoder.call(compiled, bb);
     return {
       document: sanitizeForJson(document, {
+        objects: 0,
         items: 0,
         binaryBytes: 0,
         stringBytes: 0,

@@ -292,24 +292,31 @@ function mimeTypeForExt(ext: string): string {
 }
 
 /**
+ * Decode a `.fig` and index its embedded images by SHA-1 hash. Decode once per
+ * upload and reuse the index across screens — a multi-screen hydration must not
+ * re-parse the whole (up to 50 MB) file per screen.
+ */
+export function indexFigImages(figBytes: Buffer): Map<string, DecodedFigImage> {
+  const byHash = new Map<string, DecodedFigImage>();
+  for (const image of decodeFig(figBytes).images) byHash.set(image.hash, image);
+  return byHash;
+}
+
+/**
  * Match placeholder hashes against a `.fig`'s embedded `images/` bytes (keyed by
  * the same SHA-1 the paste stamped) and mirror matches to durable storage. No
  * Figma token or REST call.
  */
 export async function resolveFigImageHashes(opts: {
-  figBytes: Buffer;
+  figImages: Map<string, DecodedFigImage>;
   hashes: string[];
   ownerEmail: string;
   uploader?: typeof uploadFile;
 }): Promise<Map<string, string>> {
-  const { figBytes, hashes, ownerEmail } = opts;
+  const { figImages, hashes, ownerEmail } = opts;
   const uploader = opts.uploader ?? uploadFile;
 
-  const decoded = decodeFig(figBytes);
-  const byHash = new Map<string, DecodedFigImage>();
-  for (const image of decoded.images) byHash.set(image.hash, image);
-
-  const wanted = hashes.filter((h) => byHash.has(h));
+  const wanted = hashes.filter((h) => figImages.has(h));
   const resolved = new Map<string, string>();
 
   for (
@@ -320,7 +327,7 @@ export async function resolveFigImageHashes(opts: {
     const batch = wanted.slice(offset, offset + FIG_HYDRATE_UPLOAD_CONCURRENCY);
     await Promise.all(
       batch.map(async (hash) => {
-        const image = byHash.get(hash)!;
+        const image = figImages.get(hash)!;
         try {
           const uploaded = await uploader({
             data: image.bytes,
@@ -341,14 +348,18 @@ export async function resolveFigImageHashes(opts: {
   return resolved;
 }
 
-/** Token-free hydration of one screen's image placeholders from an uploaded `.fig`. */
+/**
+ * Token-free hydration of one screen's image placeholders from an uploaded
+ * `.fig`. Takes a pre-decoded image index (see `indexFigImages`) so a
+ * multi-screen hydration decodes the file once, not once per screen.
+ */
 export async function hydrateFileImagesFromFig(opts: {
   fileId: string;
-  figBytes: Buffer;
+  figImages: Map<string, DecodedFigImage>;
   ownerEmail: string;
   uploader?: typeof uploadFile;
 }): Promise<ApplyHydrationResult & { fileId: string }> {
-  const { fileId, figBytes, ownerEmail } = opts;
+  const { fileId, figImages, ownerEmail } = opts;
   const { workspaceFile, designId } = await loadHydratableFile(fileId);
   const live = await readLiveSourceFile(workspaceFile);
 
@@ -358,7 +369,7 @@ export async function hydrateFileImagesFromFig(opts: {
   }
 
   const resolvedUrls = await resolveFigImageHashes({
-    figBytes,
+    figImages,
     hashes,
     ownerEmail,
     uploader: opts.uploader,

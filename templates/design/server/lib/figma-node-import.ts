@@ -36,6 +36,9 @@ const MAX_FIGMA_IMAGE_BYTES = 15 * 1024 * 1024;
 const MAX_TOTAL_FIGMA_IMAGE_BYTES = 64 * 1024 * 1024;
 const MAX_FIGMA_IMAGE_REFERENCES = 256;
 const MAX_FIGMA_IMAGE_IDS_PER_REQUEST = 50;
+// Figma's `/images` endpoint takes ids in the query string; cap the batch by
+// both count and URL length so a complex frame's ids are fetched in full.
+const MAX_FIGMA_IMAGE_IDS_QUERY_CHARS = 1_800;
 const MAX_CONCURRENT_FIGMA_IMAGE_UPLOADS = 4;
 const FIGMA_IMAGE_FETCH_TIMEOUT_MS = 20_000;
 const FIGMA_IMAGE_MIME_TYPES = new Map([
@@ -637,19 +640,39 @@ async function fetchFallbackImageUrls(
   nodeIds: string[],
 ): Promise<Record<string, string>> {
   if (nodeIds.length === 0) return {};
-  const ids = nodeIds.slice(0, MAX_FIGMA_IMAGE_IDS_PER_REQUEST);
-  const envelope = await figmaGet(`/images/${fileKey}`, {
-    ids: ids.join(","),
-    format: "png",
-    scale: 2,
-  });
-  const json = providerJson(envelope, "images") as {
-    images?: Record<string, string | null | undefined>;
-  };
   const result: Record<string, string> = {};
-  for (const [id, url] of Object.entries(json.images ?? {})) {
-    if (typeof url === "string" && url) result[id] = url;
+  const fetchBatch = async (ids: string[]) => {
+    if (ids.length === 0) return;
+    const envelope = await figmaGet(`/images/${fileKey}`, {
+      ids: ids.join(","),
+      format: "png",
+      scale: 2,
+    });
+    const json = providerJson(envelope, "images") as {
+      images?: Record<string, string | null | undefined>;
+    };
+    for (const [id, url] of Object.entries(json.images ?? {})) {
+      if (typeof url === "string" && url) result[id] = url;
+    }
+  };
+  // Batch over the full ID list by count and query length so complex frames
+  // don't silently drop layers beyond the first request.
+  let batch: string[] = [];
+  let queryChars = 0;
+  for (const nodeId of nodeIds) {
+    const addedChars = nodeId.length + 1;
+    if (
+      batch.length >= MAX_FIGMA_IMAGE_IDS_PER_REQUEST ||
+      queryChars + addedChars > MAX_FIGMA_IMAGE_IDS_QUERY_CHARS
+    ) {
+      await fetchBatch(batch);
+      batch = [];
+      queryChars = 0;
+    }
+    batch.push(nodeId);
+    queryChars += addedChars;
   }
+  await fetchBatch(batch);
   return result;
 }
 
