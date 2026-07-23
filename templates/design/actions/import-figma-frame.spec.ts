@@ -542,9 +542,10 @@ describe("import-figma-frame", () => {
 
     await action.run({ fileKey: "abcDEF12345", nodeId: "1:2" } as any);
 
-    expect(requestedBatches).toHaveLength(1);
-    expect(requestedBatches[0]).toHaveLength(50);
-    expect(requestedBatches[0]).toEqual(fallbackIds.slice(0, 50));
+    expect(
+      requestedBatches.map((ids) => ids.length).sort((a, b) => b - a),
+    ).toEqual([50, 1]);
+    expect(requestedBatches.flat()).toEqual(fallbackIds);
     expect(requestedBatches.every((ids) => ids.join(",").length <= 1_800)).toBe(
       true,
     );
@@ -591,8 +592,8 @@ describe("import-figma-frame", () => {
 
     await action.run({ fileKey: "abcDEF12345", nodeId: "1:2" } as any);
 
-    expect(requestedQueries).toHaveLength(1);
-    expect(requestedQueries[0]).toBe(fallbackIds.join(","));
+    expect(requestedQueries).toEqual(fallbackIds);
+    expect(requestedQueries.every((ids) => ids.length <= 1_800)).toBe(true);
   });
 
   it("rejects an import with more than 256 required image references before requesting render URLs", async () => {
