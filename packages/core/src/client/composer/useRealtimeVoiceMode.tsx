@@ -1671,8 +1671,8 @@ function useRealtimeVoiceModeController(
     transcriptSequenceRef.current = 0;
     transcriptSequencer.reset();
     transition("connecting");
-    setChatVisible(false);
-    window.dispatchEvent(new Event("agent-panel:close"));
+    setChatVisible(true);
+    window.dispatchEvent(new Event("agent-panel:open"));
 
     await hydratePreferences();
     if ((stateRef.current as string) !== "connecting") return;

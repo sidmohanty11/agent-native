@@ -71,12 +71,37 @@ export function VoiceButton({ voice, isMac, disabled }: VoiceButtonProps) {
     onConnected: () => voiceProviders.refresh(),
   });
 
-  if (!supported) return null;
-
   const recording = state === "recording" || state === "starting";
   const transcribing = state === "transcribing";
 
-  if (realtimeVoice?.active && !recording && !transcribing) return null;
+  if (realtimeVoice?.active) {
+    const ending = realtimeVoice.state === "ending";
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            onClick={realtimeVoice.end}
+            disabled={disabled || ending}
+            aria-label={realtimeCopy.endVoiceMode}
+            aria-pressed="true"
+            className="relative shrink-0 flex h-7 w-7 items-center justify-center rounded-md bg-[#00B5FF]/10 text-[#00B5FF] transition-colors duration-150 hover:bg-[#00B5FF]/20 disabled:cursor-not-allowed disabled:opacity-30"
+          >
+            <span
+              className="absolute inset-0 rounded-md bg-[#00B5FF]/30 animate-ping motion-reduce:animate-none"
+              aria-hidden="true"
+            />
+            {ending ? (
+              <IconLoader2 className="relative z-10 h-4 w-4 animate-spin" />
+            ) : (
+              <IconPlayerStopFilled className="relative z-10 h-3.5 w-3.5" />
+            )}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>{realtimeCopy.endVoiceMode}</TooltipContent>
+      </Tooltip>
+    );
+  }
 
   if (realtimeVoice && !recording && !transcribing) {
     return (
@@ -97,9 +122,12 @@ export function VoiceButton({ voice, isMac, disabled }: VoiceButtonProps) {
         }}
         onStartVoiceMode={() => void realtimeVoice.start()}
         onKeepDictating={() => void start()}
+        dictationSupported={supported}
       />
     );
   }
+
+  if (!supported) return null;
 
   const label = recording
     ? "Stop recording"
@@ -121,16 +149,22 @@ export function VoiceButton({ voice, isMac, disabled }: VoiceButtonProps) {
           disabled={disabled || transcribing}
           aria-label={label}
           aria-pressed={recording}
-          className={`shrink-0 flex h-7 w-7 items-center justify-center rounded-md transition-colors duration-150 disabled:opacity-30 disabled:cursor-not-allowed ${
+          className={`relative shrink-0 flex h-7 w-7 items-center justify-center rounded-md transition-colors duration-150 disabled:opacity-30 disabled:cursor-not-allowed ${
             recording
               ? "text-[#00B5FF] bg-[#00B5FF]/10 hover:bg-[#00B5FF]/20"
               : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
           }`}
         >
+          {recording && (
+            <span
+              className="absolute inset-0 rounded-md bg-[#00B5FF]/30 animate-ping motion-reduce:animate-none"
+              aria-hidden="true"
+            />
+          )}
           {transcribing ? (
-            <IconLoader2 className="h-4 w-4 animate-spin" />
+            <IconLoader2 className="relative z-10 h-4 w-4 animate-spin" />
           ) : recording ? (
-            <IconPlayerStopFilled className="h-3.5 w-3.5" />
+            <IconPlayerStopFilled className="relative z-10 h-3.5 w-3.5" />
           ) : (
             <IconMicrophone className="h-4 w-4" />
           )}

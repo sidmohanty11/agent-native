@@ -120,6 +120,7 @@ export interface RealtimeVoiceModeEntryProps {
   connectingBuilder?: boolean;
   onConnectBuilder?: () => void;
   onUseOpenAiKey?: () => void;
+  dictationSupported?: boolean;
   className?: string;
 }
 
@@ -141,6 +142,7 @@ export function RealtimeVoiceModeEntry({
   connectingBuilder = false,
   onConnectBuilder,
   onUseOpenAiKey,
+  dictationSupported = true,
   className,
 }: RealtimeVoiceModeEntryProps) {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
@@ -223,14 +225,16 @@ export function RealtimeVoiceModeEntry({
           </div>
 
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => choose(onKeepDictating)}
-            >
-              {copy.keepDictating}
-            </Button>
+            {dictationSupported ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => choose(onKeepDictating)}
+              >
+                {copy.keepDictating}
+              </Button>
+            ) : null}
             {setupRequired ? (
               <>
                 <Button

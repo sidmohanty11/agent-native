@@ -11,6 +11,13 @@ import {
   RealtimeVoiceModeEntry,
   type RealtimeVoiceModeCopy,
 } from "./RealtimeVoiceMode.js";
+import {
+  RealtimeVoiceModeBoundary,
+  RealtimeVoiceModeProvider,
+  useRealtimeVoiceMode,
+} from "./useRealtimeVoiceMode.js";
+import type { VoiceDictationApi } from "./useVoiceDictation.js";
+import { VoiceButton } from "./VoiceButton.js";
 
 const copy: RealtimeVoiceModeCopy = {
   entryButtonLabel: "Use microphone",
@@ -145,6 +152,21 @@ describe("RealtimeVoiceMode", () => {
     expect(document.body.textContent).not.toContain("Talk to your app");
   });
 
+  it("hides unavailable dictation without hiding realtime voice", () => {
+    render(
+      <RealtimeVoiceModeEntry
+        copy={copy}
+        open
+        dictationSupported={false}
+        onStartVoiceMode={vi.fn()}
+        onKeepDictating={vi.fn()}
+      />,
+    );
+
+    expect(document.body.textContent).toContain("Start voice mode");
+    expect(document.body.textContent).not.toContain("Keep dictating");
+  });
+
   it("does not start realtime voice while provider readiness is unresolved", () => {
     const onStartVoiceMode = vi.fn();
     const onKeepDictating = vi.fn();
@@ -238,6 +260,88 @@ describe("RealtimeVoiceMode", () => {
     );
     expect(onConnectBuilder).toHaveBeenCalledOnce();
     expect(onUseOpenAiKey).not.toHaveBeenCalled();
+  });
+
+  it("keeps the chat composer available when voice mode starts", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise(() => undefined)),
+    );
+    vi.stubGlobal("RTCPeerConnection", class {});
+    vi.stubGlobal("navigator", {
+      ...window.navigator,
+      languages: ["en-US"],
+      mediaDevices: {
+        getUserMedia: vi.fn(() => new Promise(() => undefined)),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      },
+    });
+    const onOpen = vi.fn();
+    const onClose = vi.fn();
+    window.addEventListener("agent-panel:open", onOpen);
+    window.addEventListener("agent-panel:close", onClose);
+
+    const dictationVoice: VoiceDictationApi = {
+      state: "idle",
+      amplitude: 0,
+      durationMs: 0,
+      errorMessage: null,
+      provider: "auto",
+      supported: true,
+      start: vi.fn(async () => undefined),
+      stop: vi.fn(),
+      cancel: vi.fn(),
+      dismissError: vi.fn(),
+    };
+
+    function VoiceModeHarness() {
+      const voice = useRealtimeVoiceMode();
+      return (
+        <>
+          <button type="button" onClick={() => void voice.start()}>
+            Start voice mode
+          </button>
+          <RealtimeVoiceModeBoundary>
+            <div data-testid="chat-composer">Chat composer</div>
+            <VoiceButton voice={dictationVoice} isMac={false} />
+          </RealtimeVoiceModeBoundary>
+        </>
+      );
+    }
+
+    render(
+      <RealtimeVoiceModeProvider browserTabId="test-tab">
+        <VoiceModeHarness />
+      </RealtimeVoiceModeProvider>,
+    );
+
+    const startVoiceMode = Array.from(
+      document.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((button) => button.textContent?.includes("Start voice mode"));
+    act(() => startVoiceMode?.click());
+
+    expect(
+      document.querySelector('[data-testid="chat-composer"]'),
+    ).not.toBeNull();
+    expect(onOpen).toHaveBeenCalledOnce();
+    expect(onClose).not.toHaveBeenCalled();
+
+    const stopVoiceMode = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="End voice mode"]',
+    );
+    expect(stopVoiceMode).not.toBeNull();
+    expect(stopVoiceMode?.getAttribute("aria-pressed")).toBe("true");
+    act(() => stopVoiceMode?.click());
+    expect(
+      document.querySelector('button[aria-label="End voice mode"]'),
+    ).toBeNull();
+    expect(
+      document.querySelector('[data-testid="chat-composer"]'),
+    ).not.toBeNull();
+
+    window.removeEventListener("agent-panel:open", onOpen);
+    window.removeEventListener("agent-panel:close", onClose);
   });
 
   it("toggles chat without ending the voice session", () => {
